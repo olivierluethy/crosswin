@@ -24,3 +24,6 @@ The user should be able to clone a repository, say "Start" to Claude Code, and l
 - Avoid extensive automated tests until a usable end-to-end slice exists; run minimum build/diagnostic checks when necessary. User will conduct interactive acceptance tests.
 - Do not make unsupported claims of broad app compatibility.
 - Stop cleanly when requested or when budget is exhausted, leaving an exact handoff in PROGRESS.md.
+
+## Skill routing and recovery
+Discover installed Superpowers skills and use the relevant brainstorming, debugging, review and verification workflows without creating unnecessary planning gates. Use frontend-design when building an actual interface. For repeated unresolved bugs, after two unsuccessful fixes gather fresh evidence; by the third attempt reproduce autonomously with target-appropriate tools, rather than asking the user to retry. Playwright is for web surfaces, not a universal desktop automation solution. Keep a record of failed hypotheses in PROGRESS.md.
