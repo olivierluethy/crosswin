@@ -22,3 +22,20 @@ Enable users to clone existing C# WPF and WinForms projects and actually build, 
 
 ## Definition of an initial usable result
 A documented command that takes an existing sample repository, identifies support and limitations, launches a genuine interactive application when feasible, and returns actionable diagnostics otherwise. Explicitly report unsupported WPF features rather than simulating success.
+
+## Superpowers and skill routing
+- Use the installed **Superpowers** skill suite whenever a relevant skill exists. At session start discover available skills rather than assuming exact names or that a plugin is installed. Follow their instructions while keeping the CrossWin mission and autonomous workflow authoritative.
+- For uncertain architecture or meaningful alternatives, use Superpowers brainstorming briefly and autonomously; select a recommendation and implement, without asking routine approval questions or generating sprawling phase plans.
+- For any user-facing GUI or website, use an available frontend-design skill to produce distinctive, accessible, responsive design. No GUI is required for the initial CLI vertical slice.
+- Use relevant debugging, systematic investigation, code review and verification skills as appropriate. Skill use is a means to ship working software, not an excuse for ceremony.
+- If the Superpowers plugin or a named skill is missing, record the missing dependency and continue using the principles in the local skill; do not block progress solely on a plugin.
+
+## Adaptive testing escalation
+- Start with essential build/smoke checks, not a broad test suite. **Never claim a fix works solely because code was changed.**
+- Track repeated failures by *root symptom*, not number of user messages. On the second failed attempt, stop repeating guesses and gather new evidence. On the third unresolved attempt at the same issue, automatically switch to hands-on reproduction and instrumented debugging before asking the user to test again.
+- Select tools for the actual target: Playwright for web UIs; native app automation, screenshots, runtime logs, process tracing and appropriate platform tooling for desktop apps. Playwright alone does not generally automate arbitrary WPF/WinForms windows.
+- If the environment cannot reproduce the issue, explain the exact limitation and request the minimum evidence or permission needed; do not falsely declare it fixed.
+- Record symptom, attempts, reproduction command, evidence and resolution in PROGRESS.md; add a focused regression test when it prevents a repeat.
+
+## Reusable project bootstrap
+- Keep the agent workflow generic where possible: a mission, one live checklist, concise architecture notes, skill routing and evidence-based debugging. For a different project, adapt mission, acceptance criteria, runtime/test tools and technical constraints rather than blindly copying CrossWin-specific instructions.
