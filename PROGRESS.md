@@ -25,5 +25,5 @@ This is the single source of truth for ongoing work. Update it during implementa
 
 **Decisions:** Original WPF/WinForms code must remain the target; no mandatory migration. Fast feedback and user-led milestone testing preferred.
 
-## Work log
+- 2026-11-02: Compared SwissHacks monorepo agent guidance: Superpowers plugin enabled there, frontend-design skill installed, concise commits and visual inspection emphasized. Added conditional Superpowers routing and evidence-based debugging escalation to CrossWin.\n\n## Work log
 - 2026-11-02: Initial mission, autonomous workflow and handoff checklist established.
