@@ -106,3 +106,12 @@ CrossWin must support many independent AI agents collaborating on one applicatio
 - Distinguish code/build failures, product regressions, stale test assumptions, infrastructure failures and conflicts. Return compact actionable failure traces to the requesting agent, plus an aggregated project-wide status for humans.
 - Benchmark 1/5/20/100 agent-client workloads with representative projects, report throughput, queue time, p50/p95 latency, CPU/memory, test isolation and correctness. Scale gradually; do not claim 100 concurrent emulator sessions without measured hardware capacity.
 - Begin with two agents on different routes/branches sharing one CrossWin server and prove isolation, fairness, accurate diagnostics and a GUI-visible overview before scaling.
+
+## Intelligent test orchestration and evidence validity
+For multiple agents and rapidly changing projects, every test result must identify the exact code revision/worktree, build artifact, runtime/device profile, app data fixture, test definition and relevant environment. Never present a pass from an old revision as proof of current correctness.
+- Build a conservative change-impact map from files/modules/routes/shared dependencies to tests; mark impacted results stale and schedule targeted reruns. Unknown dependencies require broader regression checks, not optimistic cache hits.
+- Reuse cached results only when relevant code, dependencies, test inputs and environment fingerprints match; maintain explicit invalidation and audit trail. Periodically run broad/full regression tests to detect missed dependency edges.
+- Deduplicate identical pending test requests across agents; prioritize high-risk shared components and newly changed flows; return structured failure ownership and notify affected agents without assuming a single culprit.
+- Keep testing reproducible and trustworthy: deterministic fixtures, isolated mutable state, test seeds, artifact hashes, captured steps, traceable failures, flaky-test detection and honest unknown/blocked statuses.
+- Add observability and guardrails to optimization: project-level test dashboard, queue/cost/latency budgets, no silent exposure of private app data, and transparent cancellation/resource limits.
+- Implement only after a reliable baseline and isolated two-agent demo; measure saved test time and missed-regression rate against a full-suite baseline.
