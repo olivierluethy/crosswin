@@ -119,3 +119,11 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - [ ] Demonstrate one complete agent loop: discover → start/attach session → inspect UI → batch actions → assert state → retrieve diagnostics; same session optionally visible in GUI.
 - [ ] Benchmark action-to-observation latency and setup friction against direct API, avoiding unsupported claims that MCP itself accelerates execution.
 - [ ] Preserve fully functional GUI-only operation; document permissions, session isolation, sensitive logs and alternative local API for hosts without MCP.
+
+## Multi-agent shared test infrastructure — #2, #5, #6
+- [ ] Define agent/session IDs, git revision/worktree, target screen/flow, device profile and structured test results in MCP and local APIs.
+- [ ] Demonstrate two agents testing separate routes or branches through one CrossWin server with isolated mutable state, correct diagnostics and no cross-session interference.
+- [ ] Implement bounded session scheduling, fair queues, exclusive mutable-device leases, timeouts, cancellation and resource-aware warm reuse.
+- [ ] Add semantic navigation/assertions, revision-safe caching and test-failure classification (app bug vs stale assertion vs infrastructure).
+- [ ] Load-test 1/5/20/100 simultaneous MCP clients; publish actual throughput, queue times, p50/p95 and hardware usage. Do not equate clients with 100 emulator instances.
+- [ ] Present a simple human-readable overview of active agents, tests, results and blockers without exposing novice users to orchestration jargon.
