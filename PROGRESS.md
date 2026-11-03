@@ -127,3 +127,10 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - [ ] Add semantic navigation/assertions, revision-safe caching and test-failure classification (app bug vs stale assertion vs infrastructure).
 - [ ] Load-test 1/5/20/100 simultaneous MCP clients; publish actual throughput, queue times, p50/p95 and hardware usage. Do not equate clients with 100 emulator instances.
 - [ ] Present a simple human-readable overview of active agents, tests, results and blockers without exposing novice users to orchestration jargon.
+
+## Intelligent test orchestration and trust — after isolated multi-agent baseline
+- [ ] Stamp test evidence with git revision/worktree, build hash, device/runtime profile, fixtures and test version; visibly mark stale or unverified results.
+- [ ] Implement conservative change-impact selection and targeted reruns; fall back to broader regression tests when dependency coverage is uncertain.
+- [ ] Deduplicate identical concurrent test requests and safely reuse fingerprint-matched results; record invalidation decisions.
+- [ ] Add deterministic replay, isolated fixtures, flaky-test detection, actionable cross-agent regression notifications and a plain-language project status.
+- [ ] Compare optimized selection against periodic full regression runs; report saved time, missed regressions, false invalidations and queue/resource costs.
