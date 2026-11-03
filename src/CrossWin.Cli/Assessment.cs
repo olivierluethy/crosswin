@@ -1,10 +1,10 @@
 namespace CrossWin;
 
-public enum SupportLevel { Verified, Experimental, Unsupported }
+public enum SupportLevel { Supported, Experimental, Unsupported }
 
 /// <summary>
-/// Honest support verdicts. "Verified" means CrossWin has run a comparable sample end to end on a real host,
-/// not that every app of this kind works. See ARCHITECTURE.md evidence ledger.
+/// Honest support verdicts. "Supported" means CrossWin has run a comparable sample end to end on a real host,
+/// not that this particular app has been tested. See ARCHITECTURE.md evidence ledger.
 /// </summary>
 public sealed record Assessment(SupportLevel Level, string Summary)
 {
@@ -22,8 +22,8 @@ public sealed record Assessment(SupportLevel Level, string Summary)
             return new(SupportLevel.Experimental, "Wine + self-contained Windows .NET runtime; see risks below.");
         return p.Ui switch
         {
-            UiFramework.WinForms => new(SupportLevel.Verified, "Wine + self-contained Windows .NET runtime (WinForms sample verified)."),
-            _ => new(SupportLevel.Verified, "Wine + self-contained Windows .NET runtime, WPF software rendering (WPF sample verified)."),
+            UiFramework.WinForms => new(SupportLevel.Supported, "Wine + self-contained Windows .NET runtime; path verified with WinForms samples, not with this app."),
+            _ => new(SupportLevel.Supported, "Wine + self-contained Windows .NET runtime, WPF software rendering; path verified with WPF samples, not with this app."),
         };
     }
 }

@@ -6,7 +6,9 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [x] Establish the actual macOS/Linux host environment and supported architectures; record constraints. (Apple M5 Max, macOS 27.2; see ARCHITECTURE.md evidence E1)
 - [x] Inspect current backends; record findings in ARCHITECTURE.md. (Wine 11.21 via Gcenx build + self-contained Windows .NET runtime chosen; Homebrew wine casks disabled since 2026-09-01)
 - [x] Own minimal samples: `samples/HelloWinForms`, `samples/HelloWpf` (net8.0-windows, part of this repo).
-- [ ] Select third-party open-source WinForms and WPF samples with clear licenses and run them (e.g. microsoft/WPF-Samples, MIT).
+- [x] Third-party WPF: microsoft/WPF-Samples (MIT) CalculatorDemo and WPFGallery (.NET 10, Fluent) run and respond to input (E6).
+- [ ] Third-party WinForms sample (e.g. dotnet/winforms samples or a small MIT app) through `./crosswin run`.
+- [ ] Icon-font gap (Segoe Fluent Icons / MDL2 missing): document "bring your own font" path or find a license-compatible substitute.
 - [x] Minimal CLI: `./crosswin inspect` reports framework, TFM, UI stack, platform, packages, risks and a verdict.
 - [x] Real WinForms launch path on this Mac with logs (`./crosswin run`), verified interactively incl. clicks/typing (E3).
 - [x] WPF launch feasibility: **works with WPF software rendering** for the sample (XAML, binding, gradients, text input) (E4). GPU path (`--gpu`) launches but is not visually verified.
@@ -20,7 +22,7 @@ This is the single source of truth for ongoing work. Update it during implementa
 ## Current handoff
 **Status:** First vertical slice works on Apple Silicon macOS: `./crosswin run samples --project HelloWpf` builds a real WPF app on macOS and runs it interactively under Wine; `snap`/`input` give agent-side visual inspection and real input.
 
-**Next action on Start:** Run a third-party sample (microsoft/WPF-Samples, a WinForms sample) through `./crosswin run`, record results in ARCHITECTURE.md; then Linux verification via Docker linux/amd64 + Xvfb.
+**Next action on Start:** Linux verification via Docker linux/amd64 + Xvfb (Wine from distro), then a third-party WinForms sample.
 
 **Blockers:** None. GPU-rendered WPF needs a visual check by a human (agent capture only sees GDI/software content).
 
@@ -36,6 +38,7 @@ This is the single source of truth for ongoing work. Update it during implementa
 - **WPF capture blank with hardware rendering** — D3D content is not captured by `PrintWindow`; software rendering is captured. Not proof of a rendering failure.
 - **`dotnet` SIGKILLed (exit 137) after installing SDK 10 over SDK 8** — signature valid on disk; macOS caches signatures per inode. Fix: copy+move muxer (done in `./crosswin` bootstrap).
 - **`setup` hung** — `wineserver -w` waits for all Wine processes, an app was running. Fix: no wait after `reg add`.
+- **inspect misclassified WPF-Samples projects** (`UseWpf` lower-case) — MSBuild property names are case-insensitive; parser fixed.
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log

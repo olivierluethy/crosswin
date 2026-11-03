@@ -44,6 +44,7 @@ public static class ProjectInspector
     {
         (new Regex(@"\bWebBrowser\b"), "Uses the WebBrowser control (IE/MSHTML); Wine needs Wine Gecko which CrossWin does not install yet."),
         (new Regex(@"\bD3DImage\b"), "Uses D3DImage (Direct3D interop in WPF); untested."),
+        (new Regex(@"<MediaElement\b"), "Plays media with MediaElement (Windows Media Player / Media Foundation); usually missing under Wine."),
         (new Regex(@"\bHwndHost\b"), "Hosts native HWND content in WPF (HwndHost); may render incorrectly."),
         (new Regex(@"\bAllowsTransparency\s*=\s*""True""", RegexOptions.IgnoreCase), "WPF layered/transparent windows (AllowsTransparency) are a known weak spot under Wine."),
         (new Regex(@"DllImport\(\s*""(?!user32|kernel32|gdi32|shell32|ole32|oleaut32|comctl32|comdlg32|advapi32|dwmapi|uxtheme|winmm|ntdll|shcore)([^""]+)""", RegexOptions.IgnoreCase), "P/Invokes a non-system native DLL; it must be present as a Windows binary next to the app."),
@@ -64,7 +65,10 @@ public static class ProjectInspector
     {
         var doc = XDocument.Load(csproj);
         var root = doc.Root!;
-        string Prop(string name) => root.Descendants().Where(e => e.Name.LocalName == name).Select(e => e.Value.Trim()).LastOrDefault() ?? "";
+        // MSBuild property names are case-insensitive (UseWpf == UseWPF).
+        string Prop(string name) => root.Descendants()
+            .Where(e => e.Name.LocalName.Equals(name, StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.Value.Trim()).LastOrDefault() ?? "";
 
         bool sdkStyle = root.Attribute("Sdk") != null || root.Elements().Any(e => e.Name.LocalName == "Sdk");
         var tfms = (Prop("TargetFrameworks") is { Length: > 0 } multi ? multi : Prop("TargetFramework"))

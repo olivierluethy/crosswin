@@ -44,6 +44,16 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   shows white (D3D surface not captured — inconclusive). With `DisableHWAcceleration=1`: XAML layout, TextBlock,
   Button (Classic theme look — Wine reports no visual style, so WPF uses Classic, not Aero2), TextBox, two-way
   binding, LinearGradientBrush all render correctly; clicks and typing work.
+- **E6 third-party WPF** (microsoft/WPF-Samples @ main, MIT, cloned 2026-11-03; all projects `net10.0-windows`,
+  built with SDK 10.0.403 honouring the repo's global.json):
+  - `CalculatorDemo`: renders (menu, buttons, text boxes, list); 7 × 6 = computed via SendInput → "42", tape shows
+    "7 * 6 = 42".
+  - `WPFGallery`: .NET 10 Fluent theme in dark mode, images, cards, NavigationView-style tree; clicking "Basic Input"
+    navigates. **Gap:** all icon glyphs render as empty boxes — `Segoe Fluent Icons`/`Segoe MDL2 Assets` are
+    proprietary Microsoft fonts absent from Wine; no license-compatible drop-in with identical code points known.
+    Users who own a Windows licence may copy the font into the prefix (`drive_c/windows/Fonts`); CrossWin must not
+    ship it.
+  - `inspect` over 23 sample-application projects: 20 Supported, 2 Experimental (MediaElement), 1 library.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process PrintWindow works for GDI and WPF-software content.
 
