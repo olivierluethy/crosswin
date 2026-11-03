@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Loaded into the target app via DOTNET_STARTUP_HOOKS; must not depend on WinForms/WPF/System.Drawing. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>CrossWin.Agent</AssemblyName>
+  </PropertyGroup>
+</Project>
