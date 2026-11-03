@@ -62,3 +62,13 @@ CrossWin is **not** a reverse-engineering or application-cloning product. It sho
 - Return structured, compact, actionable diffs and reproducible traces to any agent; do not make users repeatedly describe mismatches or manually write Playwright tests.
 - Keep source application inspection and execution separate from CrossWin's core mission; do not build license bypass, DRM circumvention, credential extraction or proprietary asset copying.
 - Prioritize one verified end-to-end workflow and measure iterations/time-to-match before expanding integrations.
+
+## Execution discipline: maximize verified progress per unit time
+- Begin each Continue session with a **brief** reality check: git status, current runtime, PROGRESS.md, relevant issue links, one concrete user-visible acceptance scenario. Do not rewrite the plan or restart completed work.
+- Choose the smallest **end-to-end vertical slice** that reduces the biggest real bottleneck. Define one executable acceptance check and a time/latency baseline before editing; ship, test, measure and commit. Do not build speculative frameworks, generalized abstractions or broad multi-platform scaffolding before one real target works.
+- Use a **risk-first spike** for uncertain feasibility (e.g., Android ADB device interaction, Flutter startup, web instrumentation, Wine rendering, iOS restrictions). Limit investigation, capture evidence, decide go/no-go/fallback; avoid spending hours polishing an impossible path.
+- Make progress **continuously demonstrable**: each milestone has a working command/demo, before/after metrics where relevant, a commit and exact next step. Track verified / partially verified / blocked separately. No green status based on compilation alone.
+- Treat human time and AI token consumption as performance budgets. Prefer compact event deltas, UI/accessibility trees, batched device actions and focused screenshots over repeated full-image loops. Keep diagnostic overhead and test flakiness measurable; avoid optimizing against a single lucky run.
+- Avoid premature platform breadth: a complete reliable Flutter/Android or web workflow is more valuable than superficial support for ten runtimes. Preserve current WPF/WinForms paths and prevent regressions with focused smoke tests.
+- Automate reversible actions; ask for explicit permission when required for device trust, credentials, paid services, publishing, destructive operations or sensitive data. Surface blockers with the shortest actionable user instruction and keep independent work moving.
+- End a session with a **handoff contract** in PROGRESS.md: what works, evidence, known limitations, next command, next unchecked issue-linked task. No ambiguous “almost done” claims.
