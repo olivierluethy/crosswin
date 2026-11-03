@@ -24,7 +24,7 @@ crosswin (host .NET CLI)
              streams stdout/stderr to terminal + session/app.log, flags unhandled .NET exceptions
   snap/input: file protocol with the in-process agent (session dir)
 tools/CrossWin.Agent (net6.0 startup hook, inside the app process under Wine)
-  PrintWindow on own top-level windows -> PNG; SendInput for click/type/wait
+  BitBlt from own window DC (fallback PrintWindow) -> PNG of client area; SendInput for click/type/wait
 ```
 Execution is a **compatibility layer** (Wine), not native and not a VM. The app's own binaries and the official
 Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 implementation.
@@ -54,15 +54,26 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
     Users who own a Windows licence may copy the font into the prefix (`drive_c/windows/Fonts`); CrossWin must not
     ship it.
   - `inspect` over 23 sample-application projects: 20 Supported, 2 Experimental (MediaElement), 1 library.
+- **E7 Linux** (2026-11-03): Docker `linux/amd64` Ubuntu 24.04.5 (emulated on the M5 Max), distro Wine
+  `9.0~repack-4build3`, Xvfb 1280x800, SDK 10.0.403 via bootstrap. HelloWinForms and HelloWpf: build, launch (.NET
+  runtime up ~1 s after start), clicks, typing and binding verified via host `xwd` root screenshots and agent snaps.
+  **Font finding:** without `fonts-wine` (a *Recommends* of the `wine` package) `new Font("Segoe UI", …)` throws
+  `ArgumentException: Font '?' cannot be found` (GDI+ has no fallback). `doctor` now fails on missing `tahoma.ttf` and
+  `run` prints the fix. **Crash finding:** Wine's `winedbg --auto` kept the crashed process alive; CrossWin now sets
+  `WINEDLLOVERRIDES=winedbg.exe=d` and kills a lingering crashed process after 10 s.
+  Not yet tested: real older x86_64 hardware, Wayland sessions, distro Wine older than 9.0.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
-  mac driver. In-process PrintWindow works for GDI and WPF-software content.
+  mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
+  WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
+  and WPF-software on both drivers; PrintWindow + child composition is the fallback. Images are the client area and
+  share the coordinate system of `input "click X Y"`. WPF `--gpu` content is not captured by either method.
 
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.
 - Theme fidelity: WPF picks Classic theme under Wine; real apps with explicit styles are unaffected.
 - .NET Framework 4.x apps: not supported yet (would need Wine Mono or the MS .NET Framework redistributable, and a
   macOS build path for legacy csproj/WinFX targets).
-- Linux: code path exists (system `wine` on PATH) but unverified; ARM Linux would need box64/FEX.
+- Linux: verified in an emulated x86_64 container (E7), not yet on physical older hardware; ARM Linux would need box64/FEX.
 - Startup hooks are ignored if an app sets `System.StartupHookProvider.IsSupported=false` (e.g. trimmed/AOT); then
   snap/input are unavailable but the app still runs.
 

@@ -39,6 +39,8 @@ public static class Commands
         string? wine = env.Wine;
         Line(wine != null, "wine", wine != null ? $"{env.WineVersion} at {wine}" : "missing: run  ./crosswin setup");
         Line(env.PrefixReady, "prefix", env.PrefixReady ? env.Prefix : $"not initialised ({env.Prefix}): run  ./crosswin setup");
+        if (env.WineFontsPresent == false)
+            Line(false, "fonts", "Wine's core fonts (tahoma.ttf) not found; WinForms apps may crash with \"Font cannot be found\". Debian/Ubuntu: sudo apt install fonts-wine fonts-liberation");
         Line(File.Exists(env.AgentDll), "agent", File.Exists(env.AgentDll) ? env.AgentDll : "not built: run  ./crosswin setup");
         Console.WriteLine(ok ? "\nReady." : "\nNot ready; fix the FAIL lines above.");
         return ok ? 0 : 1;
@@ -110,7 +112,7 @@ public static class Commands
 
     private static string LinuxWineHelp() => """
         Wine is not installed. Install Wine 9 or newer from your distribution or WineHQ, then rerun ./crosswin setup:
-          Debian/Ubuntu:  sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine64 wine32
+          Debian/Ubuntu:  sudo apt update && sudo apt install wine wine64   (32-bit apps: also wine32:i386)
           Fedora:         sudo dnf install wine
           Arch:           sudo pacman -S wine
         Newer builds: https://gitlab.winehq.org/wine/wine/-/wikis/Download
@@ -316,6 +318,9 @@ public static class Commands
         string appLog = Path.Combine(session, "app.log");
 
         var wineEnv = env.WineEnv();
+        // Wine's crash debugger keeps a crashed process alive (seen on Linux); let crashes end the run.
+        string overrides = Environment.GetEnvironmentVariable("WINEDLLOVERRIDES") ?? "";
+        wineEnv["WINEDLLOVERRIDES"] = overrides.Length > 0 ? overrides + ";winedbg.exe=d" : "winedbg.exe=d";
         bool agent = ProjectInspector.ModernVersion(info.ChosenTfm!) >= 6;
         if (agent)
         {
@@ -339,7 +344,15 @@ public static class Commands
             lock (log)
             {
                 log.WriteLine(line);
-                if (line.StartsWith("Unhandled exception.") || line.Contains("Unhandled exception. ")) inCrash = true;
+                if (!inCrash && line.Contains("Unhandled exception."))
+                {
+                    inCrash = true;
+                    // Safety net if the process still lingers after an unhandled .NET exception.
+                    _ = Task.Delay(TimeSpan.FromSeconds(10)).ContinueWith(_ =>
+                    {
+                        try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                    });
+                }
                 if (inCrash && crash.Length < 4000) crash.AppendLine(line);
                 Console.WriteLine("[app] " + line);
             }
@@ -359,7 +372,7 @@ public static class Commands
             _ = Task.Run(() =>
             {
                 if (!WaitFor(Path.Combine(session, "agent.ready"), TimeSpan.FromSeconds(120), p)) return;
-                Console.WriteLine($"==> App process started in Wine after {stopwatch.Elapsed.TotalSeconds:0.0}s (agent attached)");
+                Console.WriteLine($"==> .NET runtime started in Wine after {stopwatch.Elapsed.TotalSeconds:0.0}s (agent attached)");
                 if (snapAfter is { } s)
                 {
                     Thread.Sleep(TimeSpan.FromSeconds(s));
@@ -373,7 +386,11 @@ public static class Commands
         if (crash.Length > 0)
         {
             Console.WriteLine("==> The app crashed with an unhandled .NET exception (first lines above, full text in the log).");
-            Console.WriteLine("    If it works on Windows, this is likely a Wine compatibility gap; please report the exception type and top frames.");
+            string text = crash.ToString();
+            if (text.Contains("Font '") && text.Contains("cannot be found"))
+                Console.WriteLine("    Cause: a font is missing and Wine found no fallback. Install Wine's core fonts (Debian/Ubuntu: sudo apt install fonts-wine fonts-liberation) and rerun ./crosswin doctor.");
+            else
+                Console.WriteLine("    If it works on Windows, this is likely a Wine compatibility gap; please report the exception type and top frames.");
         }
         return p.ExitCode == 0 ? 0 : 4;
     }

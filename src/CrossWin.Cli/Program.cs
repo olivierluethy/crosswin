@@ -20,7 +20,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           crosswin snap                        Screenshot the windows of the running app (PNG)
           crosswin input "click X Y" "wait MS" "type TEXT"
                                                Send real mouse/keyboard input to the running app
-                                               (X/Y in pixels relative to the window, as in snap images)
+                                               (X/Y = pixels in the snap image of the window client area)
 
         Environment: CROSSWIN_HOME (default ~/.crosswin), CROSSWIN_WINE, WINEPREFIX, WINEDEBUG
         """);

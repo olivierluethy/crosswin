@@ -50,7 +50,10 @@ public sealed class HostEnv
         }
     }
 
-    public string? WineVersion => Wine is { } w ? Proc.Run(w, new[] { "--version" }, WineEnv()).Output.Trim() : null;
+    // Distro Wine may print warnings (e.g. "wine32 is missing") around the version line.
+    public string? WineVersion => Wine is { } w
+        ? Proc.Run(w, new[] { "--version" }, WineEnv()).Output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("wine-")) ?? "unknown"
+        : null;
 
     public bool PrefixReady => File.Exists(Path.Combine(Prefix, "system.reg"));
 
@@ -61,6 +64,26 @@ public sealed class HostEnv
         // MoltenVK prints Vulkan extension lists on every start; hide unless the user asked for them.
         ["MVK_CONFIG_LOG_LEVEL"] = Environment.GetEnvironmentVariable("MVK_CONFIG_LOG_LEVEL") ?? "0",
     };
+
+    /// <summary>
+    /// Wine's own core fonts (Tahoma etc.). Without them GDI+ cannot fall back for missing fonts such as
+    /// "Segoe UI" and WinForms throws "Font '?' cannot be found". Debian/Ubuntu ship them in fonts-wine.
+    /// </summary>
+    public bool? WineFontsPresent
+    {
+        get
+        {
+            if (Wine is not { } w) return null;
+            string bin = Path.GetDirectoryName(Path.GetFullPath(w))!;
+            string[] dirs =
+            {
+                Path.Combine(bin, "..", "share", "wine", "fonts"),
+                "/usr/share/wine/fonts", "/usr/local/share/wine/fonts", "/opt/wine-stable/share/wine/fonts",
+                "/opt/wine-devel/share/wine/fonts", "/opt/wine-staging/share/wine/fonts",
+            };
+            return dirs.Any(d => File.Exists(Path.Combine(d, "tahoma.ttf")));
+        }
+    }
 
     public static string ToWinePath(string unixPath) => "Z:" + Path.GetFullPath(unixPath).Replace('/', '\\');
 

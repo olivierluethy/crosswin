@@ -4,7 +4,7 @@
 // Protocol (directory given by CROSSWIN_AGENT_DIR):
 //   CrossWin writes  snap.request    -> agent writes snap-<n>-<title>.png for each visible
 //                                       top-level window of this process, then snap.done
-//   CrossWin writes  input.request   -> lines "click <x> <y>" (window-relative pixels) or
+//   CrossWin writes  input.request   -> lines "click <x> <y>" (client-area pixels, as in snap PNGs) or
 //                                       "type <text>", injected with SendInput,
 //                                       or "wait <ms>"; then input.done
 //   agent writes     agent.ready     once the hook is running
@@ -67,8 +67,17 @@ internal static unsafe class Snap
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
     [DllImport("gdi32.dll")] private static extern bool GdiFlush();
+    [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+
+    private const uint SRCCOPY = 0x00CC0020;
 
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct BITMAPINFOHEADER
@@ -78,12 +87,14 @@ internal static unsafe class Snap
         public uint biClrUsed, biClrImportant;
     }
 
+    /// <summary>First visible top-level window and the screen position of its client origin.</summary>
     public static (IntPtr Handle, int Left, int Top) MainWindow()
     {
         foreach (var (h, _) in VisibleWindows())
         {
-            GetWindowRect(h, out var r);
-            return (h, r.Left, r.Top);
+            var origin = new POINT();
+            ClientToScreen(h, ref origin);
+            return (h, origin.X, origin.Y);
         }
         return (IntPtr.Zero, 0, 0);
     }
@@ -104,42 +115,76 @@ internal static unsafe class Snap
         return windows;
     }
 
+    /// <summary>Captures the client area of each window; image pixels match "click X Y" coordinates.</summary>
     public static string CaptureAll(string dir)
     {
-        var windows = VisibleWindows();
         var report = new StringBuilder();
         int n = 0;
-        foreach (var (h, title) in windows)
+        foreach (var (h, title) in VisibleWindows())
         {
-            GetWindowRect(h, out var r);
-            int w = r.Right - r.Left, ht = r.Bottom - r.Top;
+            GetClientRect(h, out var r);
+            int w = r.Right, ht = r.Bottom;
             if (w <= 0 || ht <= 0) continue;
-            byte[]? bgra = Render(h, w, ht);
+            var (bgra, method) = Render(h, w, ht);
             if (bgra == null) { report.AppendLine($"FAILED\t{title}"); continue; }
             string safe = string.Concat(title.Split(Path.GetInvalidFileNameChars()));
             string path = Path.Combine(dir, $"snap-{n++}-{safe}.png");
             File.WriteAllBytes(path, Png.Encode(bgra, w, ht));
-            report.AppendLine($"{path}\t{w}x{ht}\t{title}");
+            report.AppendLine($"{path}\t{w}x{ht}\t{title}\t{method}");
         }
         return report.ToString();
     }
 
-    private static byte[]? Render(IntPtr hwnd, int w, int h)
+    private static (byte[]?, string) Render(IntPtr hwnd, int w, int h)
     {
+        // 1) Read back what the window has presented (Wine keeps a window surface). Works for GDI and for
+        //    WPF software rendering on both the macOS and X11 drivers, unlike WM_PRINT which WPF ignores.
+        byte[]? pixels = WithDib(w, h, dc =>
+        {
+            IntPtr src = GetDC(hwnd);
+            bool ok = BitBlt(dc, 0, 0, w, h, src, 0, 0, SRCCOPY);
+            ReleaseDC(hwnd, src);
+            return ok;
+        });
+        if (pixels != null && !Uniform(pixels)) return (pixels, "window-dc");
+
+        // 2) Ask the window (and each child, which Wine's X11 driver leaves out) to paint itself.
+        pixels = WithDib(w, h, dc =>
+        {
+            bool ok = PrintWindow(hwnd, dc, 1 /* PW_CLIENTONLY */ | 2 /* PW_RENDERFULLCONTENT */);
+            if (ok)
+            {
+                var origin = new POINT();
+                ClientToScreen(hwnd, ref origin);
+                ComposeChildren(dc, hwnd, origin);
+            }
+            return ok;
+        });
+        return (pixels, "print-window");
+    }
+
+    private static bool Uniform(byte[] bgra)
+    {
+        for (int i = 4; i < bgra.Length; i += 4)
+            if (bgra[i] != bgra[0] || bgra[i + 1] != bgra[1] || bgra[i + 2] != bgra[2]) return false;
+        return true;
+    }
+
+    private static byte[]? WithDib(int w, int h, Func<IntPtr, bool> draw)
+    {
+        IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
         var bmi = new BITMAPINFOHEADER
         {
             biSize = (uint)sizeof(BITMAPINFOHEADER), biWidth = w, biHeight = -h, // top-down
             biPlanes = 1, biBitCount = 32,
         };
-        IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
         IntPtr bmp = CreateDIBSection(dc, ref bmi, 0, out IntPtr bits, IntPtr.Zero, 0);
         if (bmp == IntPtr.Zero) { DeleteDC(dc); return null; }
         IntPtr old = SelectObject(dc, bmp);
-        bool ok = PrintWindow(hwnd, dc, 2 /* PW_RENDERFULLCONTENT */);
-        GdiFlush();
         byte[]? result = null;
-        if (ok)
+        if (draw(dc))
         {
+            GdiFlush();
             result = new byte[w * h * 4];
             Marshal.Copy(bits, result, 0, result.Length);
         }
@@ -147,6 +192,28 @@ internal static unsafe class Snap
         DeleteObject(bmp);
         DeleteDC(dc);
         return result;
+    }
+
+    private static void ComposeChildren(IntPtr target, IntPtr parent, POINT origin)
+    {
+        // GW_CHILD/GW_HWNDNEXT walk siblings top-most first; paint bottom-most first.
+        var children = new List<IntPtr>();
+        for (IntPtr c = GetWindow(parent, 5 /* GW_CHILD */); c != IntPtr.Zero; c = GetWindow(c, 2 /* GW_HWNDNEXT */))
+            if (IsWindowVisible(c)) children.Add(c);
+        children.Reverse();
+        foreach (IntPtr c in children)
+        {
+            GetWindowRect(c, out var r);
+            int w = r.Right - r.Left, h = r.Bottom - r.Top;
+            if (w <= 0 || h <= 0) continue;
+            WithDib(w, h, dc =>
+            {
+                if (PrintWindow(c, dc, 0))
+                    BitBlt(target, r.Left - origin.X, r.Top - origin.Y, w, h, dc, 0, 0, SRCCOPY);
+                return false;
+            });
+            ComposeChildren(target, c, origin);
+        }
     }
 }
 
