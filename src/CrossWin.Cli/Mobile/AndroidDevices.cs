@@ -231,17 +231,66 @@ public sealed class AndroidTarget
         return png;
     }
 
-    /// <summary>"tap X Y", "swipe X1 Y1 X2 Y2 [MS]", "type TEXT", "key BACK|HOME|ENTER|…", "wait MS", "rotate".</summary>
+    /// <summary>Visible labelled elements (text or accessibility label) with their centre, from the accessibility tree.</summary>
+    public List<(string Label, int X, int Y)> Elements()
+    {
+        Shell("uiautomator", "dump", "/sdcard/crosswin-ui.xml");
+        string xml = Shell("cat", "/sdcard/crosswin-ui.xml").Output;
+        var list = new List<(string, int, int)>();
+        foreach (Match m in Regex.Matches(xml, "<node [^>]*>"))
+        {
+            string node = m.Value;
+            string label = new[] { "text", "content-desc" }
+                .Select(a => Regex.Match(node, "\\b" + a + "=\"([^\"]*)\"").Groups[1].Value)
+                .FirstOrDefault(v => v.Length > 0) ?? "";
+            var b = Regex.Match(node, "bounds=\"\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]\"");
+            if (label.Length == 0 || !b.Success) continue;
+            label = System.Net.WebUtility.HtmlDecode(label).Replace('\n', ' ');
+            int x1 = int.Parse(b.Groups[1].Value), y1 = int.Parse(b.Groups[2].Value);
+            int x2 = int.Parse(b.Groups[3].Value), y2 = int.Parse(b.Groups[4].Value);
+            list.Add((label, (x1 + x2) / 2, (y1 + y2) / 2));
+        }
+        return list;
+    }
+
+    /// <summary>The element labelled <paramref name="text"/> (exact, then first word, prefix, contains; case-insensitive).</summary>
+    public (string Label, int X, int Y)? Find(string text)
+    {
+        var all = Elements();
+        foreach (Func<string, bool> match in new Func<string, bool>[]
+        {
+            l => l.Equals(text, StringComparison.OrdinalIgnoreCase),
+            l => l.Split(' ')[0].Equals(text, StringComparison.OrdinalIgnoreCase),
+            l => l.StartsWith(text, StringComparison.OrdinalIgnoreCase),
+            l => l.Contains(text, StringComparison.OrdinalIgnoreCase),
+        })
+            foreach (var e in all) if (match(e.Label)) return e;
+        return null;
+    }
+
+    /// <summary>
+    /// "tap X Y" or "tap TEXT" (an element's text or accessibility label), "longpress X Y|TEXT", "swipe X1 Y1 X2 Y2 [MS]",
+    /// "scroll down|up", "type TEXT", "key BACK|HOME|ENTER|…", "wait MS", "wait-for TEXT", "rotate".
+    /// </summary>
     public void Input(string command)
     {
         string[] p = command.Split(' ', 2, StringSplitOptions.TrimEntries);
         string verb = p[0].ToLowerInvariant();
-        string rest = p.Length > 1 ? p[1] : "";
+        string rest = p.Length > 1 ? p[1].Trim().Trim('"') : "";
         string[] n = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool numeric = n.Length == 2 && n.All(x => int.TryParse(x, out _));
+        (string Label, int X, int Y) Need(string text) => Find(text)
+            ?? throw new CrossWinException($"No element '{text}' on screen. Visible: {string.Join(" | ", Elements().Select(e => e.Label).Distinct().Take(25))}");
         Proc.Result? r = verb switch
         {
-            "tap" or "click" when n.Length == 2 => Shell("input", "tap", n[0], n[1]),
-            "longpress" when n.Length == 2 => Shell("input", "swipe", n[0], n[1], n[0], n[1], "800"),
+            "tap" or "click" when numeric => Shell("input", "tap", n[0], n[1]),
+            "tap" or "click" when rest.Length > 0 => TapAt(Need(rest)),
+            "longpress" when numeric => Shell("input", "swipe", n[0], n[1], n[0], n[1], "800"),
+            "longpress" when rest.Length > 0 => Need(rest) is var e ? Shell("input", "swipe", $"{e.X}", $"{e.Y}", $"{e.X}", $"{e.Y}", "800") : null,
+            "wait-for" => WaitFor(rest),
+            "scroll" => rest == "up"
+                ? Shell("input", "swipe", "540", "700", "540", "1700", "350")
+                : Shell("input", "swipe", "540", "1700", "540", "700", "350"),
             "swipe" when n.Length >= 4 => Shell("input", "swipe", n[0], n[1], n[2], n[3], n.Length > 4 ? n[4] : "300"),
             // adb's input text needs spaces as %s and shell metacharacters escaped.
             "type" => Shell("input", "text", "'" + rest.Replace("'", "'\\''").Replace(" ", "%s") + "'"),
@@ -249,12 +298,24 @@ public sealed class AndroidTarget
             "wait" when int.TryParse(rest, out int ms) => Wait(ms),
             "rotate" => Shell("settings", "put", "system", "user_rotation",
                 Shell("settings", "get", "system", "user_rotation").Output.Trim() == "1" ? "0" : "1"),
-            _ => throw new CrossWinException($"Unknown input '{command}'. Use: tap X Y | longpress X Y | swipe X1 Y1 X2 Y2 [MS] | type TEXT | key BACK|HOME|ENTER | wait MS | rotate"),
+            _ => throw new CrossWinException($"Unknown input '{command}'. Use: tap X Y | tap TEXT | longpress X Y|TEXT | swipe X1 Y1 X2 Y2 [MS] | scroll down|up | type TEXT | key BACK|HOME|ENTER | wait MS | wait-for TEXT | rotate"),
         };
         if (r is { ExitCode: not 0 }) throw new CrossWinException($"'{command}' failed: {r.Output.Trim()}");
     }
 
+    private Proc.Result TapAt((string Label, int X, int Y) e) => Shell("input", "tap", e.X.ToString(), e.Y.ToString());
+
     private static Proc.Result? Wait(int ms) { Thread.Sleep(ms); return null; }
+
+    private Proc.Result? WaitFor(string text)
+    {
+        for (int i = 0; i < 30; i++)
+        {
+            if (Find(text) != null) return null;
+            Thread.Sleep(500);
+        }
+        throw new CrossWinException($"'{text}' did not appear within 15 s.");
+    }
 
     /// <summary>Crash lines of <paramref name="package"/> since the app was started.</summary>
     public List<string> CrashLines(string package)

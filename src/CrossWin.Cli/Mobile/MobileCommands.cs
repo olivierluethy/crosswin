@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using CrossWin.Mobile.Fixtures;
 
 namespace CrossWin.Mobile;
 
@@ -14,12 +16,23 @@ public static class MobileCommands
           crosswin mobile setup [--phone-only] [--accept-licenses]
                 Android emulator from Google's command-line tools (~2 GB, once), or with --phone-only
                 just adb (~10 MB) for a real phone over USB/Wi-Fi.
-          crosswin mobile run <repo> [--device ID] [--phone | --serial S] [--headless] [--release] [--grant]
+          crosswin mobile run <repo> [--device ID] [--phone | --serial S] [--headless] [--release] [--ask-permissions]
                 Build the APK (Flutter, React Native, Expo, Kotlin) and run it on the emulator or phone,
                 shaped like the chosen device.
+                Puts test photos, videos, contacts and files on the device the first time (--no-seed skips).
+          crosswin mobile seed [options]       Test data and device state for the running emulator/phone:
+                --photos N         a large library of N photos instead of the ~70 everyday ones
+                --date YYYY-MM-DD  set the device date (e.g. 2026-10-31 for Halloween); --date now restores it
+                --timezone ZONE    e.g. Europe/Zurich      --locale de-CH   language and region
+                --location PLACE   zurich, rome, tokyo … or LAT,LON (emulator GPS)
+                --photo-access full|limited|none           what the app may see of the photo library
+                --no-videos --no-contacts --no-files       leave those out;  --reset removes all test data
+                Your own files in ~/.crosswin/fixtures/user/ (e.g. photos with faces) are added too.
           crosswin mobile device <ID>          Reshape the running emulator/phone to another device; relaunch
           crosswin mobile snap [--out FILE]    Screenshot of the running Android app (PNG)
-          crosswin mobile input "tap X Y" "type hello" "key BACK" "swipe X1 Y1 X2 Y2" "wait 500"
+          crosswin mobile input "tap Skip" "tap X Y" "type hello" "key BACK" "scroll down" "wait-for Done"
+                                               (tap by visible text/label, or by pixels of the snap image)
+          crosswin mobile ui                   List the labelled elements on screen and where they are
           crosswin mobile stop                 Restore the screen size and shut the emulator down
           crosswin mobile devices              List device profiles
           crosswin mobile inspect <repo>       Detect the app type and what can run here
@@ -60,7 +73,13 @@ public static class MobileCommands
                 Console.WriteLine($"APK: {apk}");
                 var t = AndroidTarget.Acquire(sdk, Opt("--serial"), Flag("--phone"), Flag("--headless"));
                 t.ApplyProfile(device);
-                var (pkg, act) = t.Install(apk, Flag("--grant"));
+                var (pkg, act) = t.Install(apk, grantPermissions: !Flag("--ask-permissions"));
+                var seeder = new AndroidSeeder(env, t);
+                if (!Flag("--no-seed") && !seeder.Seeded)
+                {
+                    Console.WriteLine("Adding test data (photos, videos, contacts, files) ...");
+                    seeder.Seed(new AndroidSeeder.Options(Package: pkg));
+                }
                 t.Launch(pkg, act);
                 Save(env, new Session(t.Serial, pkg, act, device.Id));
                 Console.WriteLine($"Running {pkg} on {(t.IsEmulator ? "the emulator" : t.Serial)} as {device.Name} ({device.LogicalSize}).");
@@ -81,6 +100,34 @@ public static class MobileCommands
                 t.Launch(s.Package, s.Activity);
                 Save(env, s with { Device = d.Id });
                 Console.WriteLine($"Now {d.Name} ({d.LogicalSize}).");
+                return 0;
+            }
+            case "seed":
+            {
+                AndroidTarget t;
+                Session? s = File.Exists(SessionPath(env)) ? JsonSerializer.Deserialize<Session>(File.ReadAllText(SessionPath(env))) : null;
+                t = AndroidTarget.Acquire(sdk, s?.Serial, Flag("--phone"), true);
+                var seeder = new AndroidSeeder(env, t);
+                if (Flag("--reset")) { seeder.Remove(); Console.WriteLine("Test data removed."); return 0; }
+                DateTime? date = null;
+                if (Opt("--date") is { } d)
+                {
+                    if (d == "now") { seeder.RestoreTime(); Console.WriteLine("Automatic date and time restored."); }
+                    else date = DateTime.Parse(d, CultureInfo.InvariantCulture);
+                }
+                Console.WriteLine($"Seeding {(t.IsEmulator ? "the emulator" : t.Serial)} ...");
+                seeder.Seed(new AndroidSeeder.Options(
+                    PhotoCount: Opt("--photos") is { } n ? int.Parse(n) : null,
+                    Videos: !Flag("--no-videos"), Contacts: !Flag("--no-contacts"), Files: !Flag("--no-files"),
+                    Date: date, TimeZone: Opt("--timezone"), Locale: Opt("--locale"), Location: Opt("--location"),
+                    PhotoAccess: Opt("--photo-access"), Package: s?.Package));
+                if (s != null) t.Launch(s.Package, s.Activity);
+                return 0;
+            }
+            case "ui":
+            {
+                var (t, _) = Current(env, sdk);
+                foreach (var e in t.Elements()) Console.WriteLine($"  {e.Label,-50} {e.X},{e.Y}");
                 return 0;
             }
             case "snap":

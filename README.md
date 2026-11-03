@@ -34,6 +34,28 @@ Missing Windows fonts (e.g. the icon font `Segoe MDL2 Assets`): copy the `.ttf` 
 
 Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; WebView2/WebBrowser, COM components, Direct3D interop and native third-party DLLs are flagged by `inspect` and likely to fail; .NET Framework 4.x is reported as unsupported. See [ARCHITECTURE.md](ARCHITECTURE.md) for evidence.
 
+## Mobile apps (Flutter, React Native, Kotlin) — no Android Studio, no Xcode
+
+```bash
+./crosswin mobile preview ~/code/my-flutter-app     # browser: iPhone, iPad, Pixel, Galaxy, moto side by side
+./crosswin mobile setup                            # once: Android emulator from Google's command-line tools (~2 GB)
+./crosswin mobile run ~/code/my-app --device galaxy-s24   # real Android in the emulator (or --phone over USB)
+```
+
+- **preview** (Flutter): the app compiled for the web inside device frames with each device's size, safe areas and
+  iOS or Android behaviour; every saved file reloads all frames. Photo library, contacts and permissions are answered
+  with CrossWin's test data, so pickers work. Not real iOS: files (saving drafts, exports), ML Kit, notifications and
+  other native features need the emulator.
+- **run / seed** (Android): builds the APK in an isolated copy, reshapes one emulator to the chosen phone
+  (`wm size`/`density`), installs it with permissions granted and adds test data once: ~90 generated photos with
+  EXIF dates and GPS over several years, short videos, contacts with birthdays, PDFs in Downloads.
+  `seed --date 2026-10-31 --locale de-CH --location zurich --photo-access limited --photos 20000` sets device state.
+  Your own files in `~/.crosswin/fixtures/user/` (e.g. photos with faces) are added too.
+- **input / ui / snap**: `input "tap Skip" "scroll down" "type hello"` taps by visible label; `ui` lists labels;
+  `snap` saves a screenshot.
+- iOS apps cannot be compiled or simulated off macOS (Apple's SDK and Simulator are macOS-only); the preview's iOS
+  behaviour is Flutter's, not Apple's. A Swift/SwiftUI-from-source path is planned.
+
 ## Start development with Claude Code
 
 Clone the repository and open Claude Code in its root:

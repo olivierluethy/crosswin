@@ -36,7 +36,8 @@ public sealed class FlutterPreview
         _env = env;
         _p = p;
         _work = AndroidBuild.WorkDir(env, p);
-        _src = Path.Combine(_work, "src");
+        // Its own copy: the preview patches plugins, which must never reach an Android build.
+        _src = Path.Combine(_work, "preview");
     }
 
     // ------------------------------------------------------------------ work copy
@@ -45,7 +46,14 @@ public sealed class FlutterPreview
     private IReadOnlySet<string> Generated =>
         Directory.Exists(Path.Combine(_p.Root, "web")) ? new HashSet<string>() : new HashSet<string> { "web" };
 
-    private void Sync() => Commands.Mirror(_p.Root, _src, MobileProject.MirrorSkip, Generated);
+    private List<string> _shimmed = new();
+    private string? _dataDir;
+
+    private void Sync()
+    {
+        Commands.Mirror(_p.Root, _src, MobileProject.MirrorSkip, Generated);
+        if (_shimmed.Count > 0) Fixtures.PreviewFakes.PatchPubspec(_src, _shimmed);
+    }
 
     private void Prepare(string flutter)
     {
@@ -57,8 +65,11 @@ public sealed class FlutterPreview
             var r = Proc.Run(flutter, new[] { "create", ".", "--platforms", "web", "--project-name", _p.Name }, null, _src);
             if (r.ExitCode != 0) throw new CrossWinException("flutter create --platforms web failed:\n" + r.Output.Trim());
         }
+        _shimmed = Fixtures.PreviewFakes.Prepare(_src, flutter);
+        if (_shimmed.Count > 0) Console.WriteLine($"Test data for {string.Join(", ", _shimmed)} (photos, contacts with birthdays) is built into the preview.");
         string entry = Path.Combine(_src, ".crosswin", "preview_main.dart");
         Directory.CreateDirectory(Path.GetDirectoryName(entry)!);
+        File.WriteAllText(Path.Combine(_src, ".crosswin", "crosswin_fakes.dart"), Fixtures.PreviewFakes.DartFakes(_shimmed));
         File.WriteAllText(entry, EntryPoint(_p.Name));
     }
 
@@ -73,6 +84,8 @@ public sealed class FlutterPreview
         import 'package:flutter/widgets.dart';
         import 'package:{{package}}/main.dart' as app;
 
+        import 'crosswin_fakes.dart';
+
         void main() {
           final q = Uri.base.queryParameters;
           debugDefaultTargetPlatformOverride =
@@ -82,6 +95,7 @@ public sealed class FlutterPreview
             bottom: double.tryParse(q['cw_bottom'] ?? '') ?? 0,
           );
           _CrossWinBinding(insets);
+          installCrossWinFakes();
           debugPrint('crosswin: ${q['cw_device']} with ${debugDefaultTargetPlatformOverride!.name} behaviour, insets $insets');
           app.main();
         }
@@ -191,6 +205,7 @@ public sealed class FlutterPreview
     {
         string flutter = HostEnv.FindOnPath("flutter")
             ?? throw new CrossWinException("Flutter SDK not found on PATH. Install it (https://docs.flutter.dev/get-started/install) — no Xcode or Android Studio needed for the preview.");
+        _dataDir = Fixtures.PreviewFakes.EnsureData(_env, DateTime.Now);
         Prepare(flutter);
         StartFlutter(flutter);
         Watch();
@@ -247,6 +262,7 @@ public sealed class FlutterPreview
                 ctx.Response.Headers["Cache-Control"] = "no-store";
                 s.CopyTo(ctx.Response.OutputStream);
             }
+            else if (_dataDir != null && Fixtures.PreviewFakes.TryServe(ctx, _dataDir)) { }
             else if (_appUrl is { } app) Proxy(ctx, app);
             else ctx.Response.StatusCode = 503;
         }
