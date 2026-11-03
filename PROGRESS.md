@@ -9,8 +9,8 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [x] Third-party WPF: microsoft/WPF-Samples (MIT) CalculatorDemo and WPFGallery (.NET 10, Fluent) run and respond to input (E6).
 - [ ] Third-party WinForms sample (e.g. dotnet/winforms samples or a small MIT app) through `./crosswin run`.
 - [x] Icon-font gap: `inspect` flags Segoe MDL2 Assets / Segoe Fluent Icons; `~/.crosswin/fonts` is installed and registered on `run` (E9). No license-compatible drop-in with identical code points known.
-- [ ] PassMasterSuite: verify icons once the user supplies segmdl2.ttf (or the app embeds an open icon font); source build error reported to user (E8).
-- [ ] Synthetic RadioButton clicks sometimes ignored after a navigation (E8): reproduce deterministically; try explicit MOUSEEVENTF_MOVE + down/up delay.
+- [x] PassMasterSuite runs with all icons after two app commits (missing using; embedded Fluent System Icons subset) — E8.
+- [ ] Text glyph gaps under Wine: U+2011 and superscript digits render as boxes in the "Segoe UI" fallback; consider a FontSubstitutes mapping to a host font with better coverage.
 - [x] Minimal CLI: `./crosswin inspect` reports framework, TFM, UI stack, platform, packages, risks and a verdict.
 - [x] Real WinForms launch path on this Mac with logs (`./crosswin run`), verified interactively incl. clicks/typing (E3).
 - [x] WPF launch feasibility: **works with WPF software rendering** for the sample (XAML, binding, gradients, text input) (E4). GPU path (`--gpu`) launches but is not visually verified.
@@ -46,6 +46,8 @@ This is the single source of truth for ongoing work. Update it during implementa
 - **Linux: snap timed out** — not an agent bug: app crashed on `new Font("Segoe UI")` without Wine core fonts, and `winedbg --auto` kept the process alive. Fixed with doctor font check, crash hint, winedbg disabled, crash watchdog.
 - **Linux: agent snaps wrong** (children offset by non-client area; WPF black) — X11 driver differs from mac driver in PrintWindow. Fixed by reading the window DC, client-area coordinates.
 - **WPF `--gpu` capture white** on macOS with both methods — D3D/Vulkan presentation bypasses the window surface; unresolved, needs on-screen human check.
+- **"Flaky" nav clicks in PassMasterSuite** — false alarm: my zsh loop used `set -- $v`, which does not word-split in zsh, so the agent got `click` without coordinates. With bash, 3/3 navigation clicks worked. Lesson: drive multi-step input from bash, and read `input` output instead of discarding it.
+- **Icons in PassMasterSuite buttons still boxes after the font switch** — the global implicit TextBlock style (Segoe UI) applied to the TextBlock generated for string Button content. Fixed in the app with a local TextBlock style in the IconButton template.
 - **User font not visible to WPF** — copy only: not listed; registry entry under CurrentVersion\Fonts fixes it (E9).
 - **One `run` exited with 143 after 0.3 s** right after `wine reg delete`/`pkill`; immediate retry fine. Unexplained, watch for recurrence.
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.

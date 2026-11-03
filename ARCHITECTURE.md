@@ -69,8 +69,9 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
     Generator (password, slider, toggle chips, strength bar), Checker and Cracker views.
   - Icons: all glyphs come from `Segoe MDL2 Assets` (proprietary) → empty boxes. U+2011 (non-breaking hyphen) also
     renders as a box in the fallback for `Segoe UI`.
-  - Synthetic nav clicks (RadioButton) sometimes had no effect when sent ~2 s after a previous navigation; isolated
-    single clicks worked immediately. Unresolved; human clicks not yet compared.
+  - After two app commits (ec93eea: missing `using`; 58e0937: embedded 3 KB MIT subset of Fluent System Icons +
+    IconButton TextBlock style) the unpatched build runs under CrossWin with all icons on Home, Generator, Checker
+    and Cracker; navigation clicks 3/3. (An earlier "flaky click" observation was a scripting error, see PROGRESS.md.)
 - **E9 user fonts**: a font copied into `C:\windows\Fonts` is *not* seen by WPF under Wine (Fonts.SystemFontFamilies
   from Wine DirectWrite = macOS + Wine fonts only; even a `file:///C:/windows/Fonts/#Family` URI failed). After
   registering it under `HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts` WPF lists and renders it
