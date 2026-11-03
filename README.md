@@ -26,7 +26,7 @@ Other commands:
 | `./crosswin inspect <repo>` | Framework, target, risky APIs and a support verdict — before building |
 | `./crosswin run <repo> --snap-after 3` | Run and save a PNG of the app windows after 3 s |
 | `./crosswin snap` | Screenshot the running app |
-| `./crosswin input "click 76 88" "wait 700" "type hello"` | Real mouse/keyboard input; X/Y are pixels in the `snap` image |
+| `./crosswin input "click 76 88" "wait 700" "type hello" "key Enter"` | Real mouse/keyboard input; X/Y are pixels in the `snap` image; `key` sends Enter, Tab, Escape, arrows, … |
 
 How it works: CrossWin copies your repo to `~/.crosswin/work/…` (your files are never modified), builds a self-contained `win-x64` publish with the .NET SDK on macOS/Linux, and runs the real `.exe` under Wine. WPF uses software rendering by default (`--gpu` to try hardware rendering, unverified). First start of an app takes ~10–15 s.
 

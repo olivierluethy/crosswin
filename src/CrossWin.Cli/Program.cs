@@ -18,7 +18,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
               --snap-after <s>   save a screenshot of the app windows <s> seconds after start
               --no-build         reuse the previous build output
           crosswin snap                        Screenshot the windows of the running app (PNG)
-          crosswin input "click X Y" "wait MS" "type TEXT"
+          crosswin input "click X Y" "wait MS" "type TEXT" "key Enter|Tab|Escape|Down|..."
                                                Send real mouse/keyboard input to the running app
                                                (X/Y = pixels in the snap image of the window client area)
 

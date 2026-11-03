@@ -6,7 +6,7 @@
 //                                       top-level window of this process, then snap.done
 //   CrossWin writes  input.request   -> lines "click <x> <y>" (client-area pixels, as in snap PNGs) or
 //                                       "type <text>", injected with SendInput,
-//                                       or "wait <ms>"; then input.done
+//                                       "key <Enter|Tab|Escape|Down|...>" or "wait <ms>"; then input.done
 //   agent writes     agent.ready     once the hook is running
 using System;
 using System.Collections.Generic;
@@ -276,6 +276,11 @@ internal static class Input
                 Send(Mouse(MOUSEEVENTF_LEFTDOWN), Mouse(MOUSEEVENTF_LEFTUP));
                 Trace("click: sent");
             }
+            else if (line.StartsWith("key "))
+            {
+                if (!VirtualKeys.TryGetValue(line.Substring(4).Trim(), out ushort vk)) { log.AppendLine("ERROR unknown key: " + line); continue; }
+                Send(VKey(vk, 0), VKey(vk, KEYEVENTF_KEYUP));
+            }
             else if (line.StartsWith("wait "))
             {
                 // Two clicks closer than the double-click time are a double-click, as on Windows.
@@ -303,6 +308,15 @@ internal static class Input
     }
 
     private static INPUT Mouse(uint flags) => new() { type = 0, u = new UNION { mi = new MOUSEINPUT { dwFlags = flags } } };
+    private static readonly Dictionary<string, ushort> VirtualKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Enter"] = 0x0D, ["Tab"] = 0x09, ["Escape"] = 0x1B, ["Space"] = 0x20, ["Backspace"] = 0x08, ["Delete"] = 0x2E,
+        ["Left"] = 0x25, ["Up"] = 0x26, ["Right"] = 0x27, ["Down"] = 0x28, ["Home"] = 0x24, ["End"] = 0x23,
+        ["PageUp"] = 0x21, ["PageDown"] = 0x22, ["F4"] = 0x73,
+    };
+
+    private static INPUT VKey(ushort vk, uint flags) => new() { type = 1, u = new UNION { ki = new KEYBDINPUT { wVk = vk, dwFlags = flags } } };
+
     private static INPUT Key(char c, uint flags) => new() { type = 1, u = new UNION { ki = new KEYBDINPUT { wScan = c, dwFlags = flags } } };
     private static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
 }
