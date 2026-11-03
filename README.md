@@ -4,7 +4,33 @@
 
 CrossWin is an early-stage open-source compatibility and developer-workflow project. Its mission is to make it possible to clone an existing C# WPF or WinForms repository, run the *real* app, interact with its interface, inspect changes and iterate quickly on macOS or Linux.
 
-> **Current status:** Research and implementation have not yet established working WPF or WinForms compatibility. This repository is an autonomous-development scaffold, not a working runner. Do not assume your application will run yet.
+> **Current status (2026-11-03):** Early but working. Modern .NET (6+) WinForms and WPF apps build on macOS and run interactively under Wine. Verified on an Apple Silicon Mac with small sample apps only — your app may hit Wine gaps. .NET Framework 4.x apps are not supported yet. Linux is implemented but not yet verified.
+
+## Quick start (macOS, Apple Silicon or Intel)
+
+```bash
+git clone https://github.com/olivierluethy/crosswin.git && cd crosswin
+./crosswin setup                       # private .NET SDK + Wine + prefix under ~/.crosswin (no sudo)
+./crosswin run samples --project HelloWpf
+./crosswin run /path/to/your/repo      # or: --project <Name> if it contains several apps
+```
+
+Apple Silicon needs Rosetta 2 once: `softwareupdate --install-rosetta --agree-to-license`.
+On Linux (x86_64) install Wine 9+ from your distribution first (`./crosswin setup` prints the command).
+
+Other commands:
+
+| Command | Purpose |
+|---|---|
+| `./crosswin doctor` | Check host, Rosetta, .NET SDK, Wine, prefix |
+| `./crosswin inspect <repo>` | Framework, target, risky APIs and a support verdict — before building |
+| `./crosswin run <repo> --snap-after 3` | Run and save a PNG of the app windows after 3 s |
+| `./crosswin snap` | Screenshot the running app |
+| `./crosswin input "click 80 118" "wait 700" "type hello"` | Real mouse/keyboard input to the running app |
+
+How it works: CrossWin copies your repo to `~/.crosswin/work/…` (your files are never modified), builds a self-contained `win-x64` publish with the .NET SDK on macOS/Linux, and runs the real `.exe` under Wine. WPF uses software rendering by default (`--gpu` to try hardware rendering, unverified). First start of an app takes ~10–15 s.
+
+Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; WebView2/WebBrowser, COM components, Direct3D interop and native third-party DLLs are flagged by `inspect` and likely to fail; .NET Framework 4.x is reported as unsupported. See [ARCHITECTURE.md](ARCHITECTURE.md) for evidence.
 
 ## Start development with Claude Code
 

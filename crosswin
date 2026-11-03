@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# CrossWin bootstrap: installs a private .NET SDK under $CROSSWIN_HOME, builds the CLI when its
+# sources change, then runs it. Nothing is installed system-wide.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CROSSWIN_HOME="${CROSSWIN_HOME:-$HOME/.crosswin}"
+export CROSSWIN_REPO="$REPO"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+DOTNET="$CROSSWIN_HOME/dotnet/dotnet"
+CLI_DIR="$CROSSWIN_HOME/cli"
+
+if [ ! -x "$DOTNET" ] || ! "$DOTNET" --list-sdks 2>/dev/null | grep -q '^10\.'; then
+  echo "crosswin: installing private .NET 10 SDK into $CROSSWIN_HOME/dotnet ..." >&2
+  mkdir -p "$CROSSWIN_HOME"
+  curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$CROSSWIN_HOME/dotnet-install.sh"
+  bash "$CROSSWIN_HOME/dotnet-install.sh" --channel 10.0 --install-dir "$CROSSWIN_HOME/dotnet" >&2
+  # macOS caches code signatures per inode; an in-place overwrite of the muxer gets it SIGKILLed.
+  cp "$DOTNET" "$DOTNET.new" && mv -f "$DOTNET.new" "$DOTNET"
+fi
+
+stamp="$CLI_DIR/.built"
+if [ ! -f "$stamp" ] || [ -n "$(find "$REPO/src/CrossWin.Cli" -newer "$stamp" -type f ! -path '*/bin/*' ! -path '*/obj/*' | head -1)" ]; then
+  echo "crosswin: building CLI ..." >&2
+  if ! out="$("$DOTNET" build "$REPO/src/CrossWin.Cli" -c Release -nologo -o "$CLI_DIR" 2>&1)"; then
+    echo "$out" >&2; echo "crosswin: CLI build failed" >&2; exit 1
+  fi
+  touch "$stamp"
+fi
+
+exec "$DOTNET" "$CLI_DIR/crosswin.dll" "$@"

@@ -12,22 +12,52 @@ Windows Forms and WPF are Windows-targeted desktop UI stacks. CrossWin aims to r
 - VMs/remote Windows sessions can be useful diagnostic or fallback options, but must be labeled honestly: they do not satisfy a strict 'no Windows required' execution goal.
 - Older Linux devices may lack required GPU features, libraries or instruction sets.
 
-## Initial architecture hypothesis (unverified)
-1. **Project inspector:** parse .sln/.csproj, TargetFramework, UseWPF/UseWindowsForms, platform and native dependencies.
-2. **Backend selector:** determine installed runtimes/compatibility layers and choose an explicitly supported route; report unsupported cases.
-3. **Build/launch adapter:** isolate output and runtime settings; run the real program, stream stdout/stderr, expose exit status and logs.
-4. **Compatibility gap ledger:** track concrete failing APIs, graphics issues, input behavior, installers and dependencies; implement minimal reusable shims only when justified.
-5. **CLI-first interface:** single simple command before considering a GUI, IDE or extension.
-
-## Research questions to answer with experiments
-- Which WinForms projects and target frameworks run under current Wine on macOS/Linux?
-- Can any representative WPF project run interactively? If not, what exact missing APIs, CLR support, graphics subsystem or XAML/runtime features block it?
-- What can be built on non-Windows hosts with the available SDKs, and which build tasks remain Windows-only?
-- What is the lowest-friction supported install method on Intel Mac, Apple Silicon and older Linux x86_64?
-- Which third-party dependencies and licenses constrain packaging/distribution?
+## Implemented architecture (verified on macOS arm64, 2026-11-03)
+```
+./crosswin (bash)  -> private .NET SDK in ~/.crosswin/dotnet, builds src/CrossWin.Cli
+crosswin (host .NET CLI)
+  inspect  : parses .csproj (no MSBuild eval): TFM, UseWPF/UseWindowsForms, OutputType, platform, packages,
+             risky APIs (WebView2, WebBrowser, COM, D3DImage, HwndHost, AllowsTransparency, native P/Invoke)
+  run      : mirror repo -> ~/.crosswin/work/<proj>-<hash>/src (user tree read-only)
+             dotnet publish -r win-x64 --self-contained -p:EnableWindowsTargeting=true
+             wine <app>.exe with WINEPREFIX=~/.crosswin/prefix, DOTNET_STARTUP_HOOKS=CrossWin.Agent.dll
+             streams stdout/stderr to terminal + session/app.log, flags unhandled .NET exceptions
+  snap/input: file protocol with the in-process agent (session dir)
+tools/CrossWin.Agent (net6.0 startup hook, inside the app process under Wine)
+  PrintWindow on own top-level windows -> PNG; SendInput for click/type/wait
+```
+Execution is a **compatibility layer** (Wine), not native and not a VM. The app's own binaries and the official
+Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 implementation.
 
 ## Evidence ledger
-Not yet populated. Claude Code must record for each experiment: date, host OS/CPU, sample and license, target framework, backend and version, commands, observed output, failure point, and source links where appropriate.
+- **E1 host** (2026-11-03): Apple M5 Max, macOS 27.2 (26B123), arm64, 48 GB. Rosetta 2 not preinstalled; installed
+  with `softwareupdate --install-rosetta --agree-to-license` after user approval. Note: Apple has announced Rosetta
+  phase-down after macOS 27 — an arm64-native Wine path will be needed long-term.
+- **E2 toolchain**: Homebrew `wine-stable`/`wine@devel` casks disabled 2026-09-01 (Gatekeeper). Used Gcenx
+  `wine-devel-11.21-osx64.tar.xz` (https://github.com/Gcenx/macOS_Wine_builds, sha256 9909b486…a0ce), x86_64 + wow64,
+  runs via Rosetta. .NET SDK 8.0.427 and 10.0.403 via dotnet-install.sh into ~/.crosswin/dotnet.
+  Building `net8.0-windows` WinForms *and WPF* (XAML markup compile) on macOS works with `EnableWindowsTargeting=true`.
+- **E3 WinForms** (samples/HelloWinForms, net8.0-windows, self-contained win-x64): window shown ~12–14 s after launch
+  (cold), Label/Button/TextBox(placeholder) rendered; SendInput clicks increment counter (3/3 with 700 ms spacing),
+  Unicode typing works. Screenshot: in-process PrintWindow.
+- **E4 WPF** (samples/HelloWpf): with default hardware rendering, `ContentRendered` fires but in-process PrintWindow
+  shows white (D3D surface not captured — inconclusive). With `DisableHWAcceleration=1`: XAML layout, TextBlock,
+  Button (Classic theme look — Wine reports no visual style, so WPF uses Classic, not Aero2), TextBox, two-way
+  binding, LinearGradientBrush all render correctly; clicks and typing work.
+- **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
+  mac driver. In-process PrintWindow works for GDI and WPF-software content.
+
+## Known gaps / open questions
+- WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.
+- Theme fidelity: WPF picks Classic theme under Wine; real apps with explicit styles are unaffected.
+- .NET Framework 4.x apps: not supported yet (would need Wine Mono or the MS .NET Framework redistributable, and a
+  macOS build path for legacy csproj/WinFX targets).
+- Linux: code path exists (system `wine` on PATH) but unverified; ARM Linux would need box64/FEX.
+- Startup hooks are ignored if an app sets `System.StartupHookProvider.IsSupported=false` (e.g. trimmed/AOT); then
+  snap/input are unavailable but the app still runs.
 
 ## Novel components
-None created yet. When developing a missing component, document: precise gap, existing alternatives, why they fail, new implementation, compatibility scope, reproducible evidence and remaining limits.
+- **CrossWin.Agent** — gap: Wine cannot capture another process's window (PrintWindow/screen DC), and host capture
+  needs macOS Screen Recording permission. Alternatives: host `screencapture` (permission prompt), VNC/Xvfb (Linux
+  only). Implementation: .NET startup hook, P/Invoke-only (no WinForms/WPF/System.Drawing dependency), PNG encoder,
+  SendInput. Scope: .NET 6+ apps. Limits: GPU-rendered (D3D) content not captured.

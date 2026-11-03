@@ -5,7 +5,8 @@
 //   CrossWin writes  snap.request    -> agent writes snap-<n>-<title>.png for each visible
 //                                       top-level window of this process, then snap.done
 //   CrossWin writes  input.request   -> lines "click <x> <y>" (window-relative pixels) or
-//                                       "type <text>", injected with SendInput; then input.done
+//                                       "type <text>", injected with SendInput,
+//                                       or "wait <ms>"; then input.done
 //   agent writes     agent.ready     once the hook is running
 using System;
 using System.Collections.Generic;
@@ -190,6 +191,11 @@ internal static class Input
                 SetCursorPos(x, y);
                 Thread.Sleep(50);
                 Send(Mouse(MOUSEEVENTF_LEFTDOWN), Mouse(MOUSEEVENTF_LEFTUP));
+            }
+            else if (line.StartsWith("wait "))
+            {
+                // Two clicks closer than the double-click time are a double-click, as on Windows.
+                Thread.Sleep(int.Parse(line.Substring(5)));
             }
             else if (line.StartsWith("type "))
             {

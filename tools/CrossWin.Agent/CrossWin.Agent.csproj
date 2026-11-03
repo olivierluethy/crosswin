@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Loaded into the target app via DOTNET_STARTUP_HOOKS; must not depend on WinForms/WPF/System.Drawing. -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
+    <!-- net6.0 so the hook also loads into .NET 6/7 apps. -->
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>CrossWin.Agent</AssemblyName>
