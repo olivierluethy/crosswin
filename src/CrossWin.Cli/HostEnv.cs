@@ -53,6 +53,26 @@ public sealed class HostEnv
     }
 
     // Distro Wine may print warnings (e.g. "wine32 is missing") around the version line.
+    /// <summary>
+    /// Whether this Wine can run 32-bit Windows code (needed for x86 / Prefer32Bit .NET Framework apps).
+    /// Detected by the 32-bit ntdll that Wine loads from syswow64; distro packages often ship it separately (wine32).
+    /// </summary>
+    public bool Wine32Available
+    {
+        get
+        {
+            if (Wine is not { } w) return false;
+            string bin = Path.GetDirectoryName(Path.GetFullPath(w))!;
+            string[] dirs =
+            {
+                Path.Combine(bin, "..", "lib", "wine", "i386-windows"),
+                "/usr/lib/i386-linux-gnu/wine/i386-windows", "/usr/lib/wine/i386-windows", "/usr/lib32/wine/i386-windows",
+                "/opt/wine-stable/lib/wine/i386-windows", "/opt/wine-devel/lib/wine/i386-windows", "/opt/wine-staging/lib/wine/i386-windows",
+            };
+            return dirs.Any(d => File.Exists(Path.Combine(d, "ntdll.dll")));
+        }
+    }
+
     public string? WineVersion => Wine is { } w
         ? Proc.Run(w, new[] { "--version" }, WineEnv()).Output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("wine-")) ?? "unknown"
         : null;

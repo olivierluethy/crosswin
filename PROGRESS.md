@@ -10,7 +10,8 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [ ] Third-party WinForms sample (e.g. dotnet/winforms samples or a small MIT app) through `./crosswin run`.
 - [x] Icon-font gap: `inspect` flags Segoe MDL2 Assets / Segoe Fluent Icons; `~/.crosswin/fonts` is installed and registered on `run` (E9). No license-compatible drop-in with identical code points known.
 - [x] PassMasterSuite runs with all icons after two app commits (missing using; embedded Fluent System Icons subset) — E8.
-- [ ] Text glyph gaps under Wine: U+2011 and superscript digits render as boxes in the "Segoe UI" fallback; consider a FontSubstitutes mapping to a host font with better coverage.
+- [x] Text glyph gaps and Linux FailFast: host font replacements via Wine `Fonts\Replacements` (E10); PassMasterSuite text correct on macOS and Linux.
+- [ ] Linux/Xvfb synthetic input unreliable (E11): click navigated in one run, not in the next; tooltip popup suspected. Reproduce with `CROSSWIN_AGENT_TRACE=1` + xwd, try moving the cursor first / explicit MOUSEEVENTF_MOVE.
 - [x] Minimal CLI: `./crosswin inspect` reports framework, TFM, UI stack, platform, packages, risks and a verdict.
 - [x] Real WinForms launch path on this Mac with logs (`./crosswin run`), verified interactively incl. clicks/typing (E3).
 - [x] WPF launch feasibility: **works with WPF software rendering** for the sample (XAML, binding, gradients, text input) (E4). GPU path (`--gpu`) launches but is not visually verified.
@@ -18,7 +19,9 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [x] Linux: verified in Docker linux/amd64 Ubuntu 24.04 + distro Wine 9.0 + Xvfb (E7); repeatable via `tests/linux`. Font prerequisite (`fonts-wine`) detected by `doctor`.
 - [ ] Linux on physical older x86_64 hardware / real desktop session (X11 and Wayland/XWayland).
 - [x] One-command setup/launch workflow: `./crosswin setup`, `./crosswin run <repo>`; private .NET SDK, no sudo, no Windows/Visual Studio.
-- [ ] .NET Framework (net4x / legacy csproj) apps: currently reported as Unsupported; investigate Wine Mono vs. MS .NET Framework redistributable + build path.
+- [x] .NET Framework (net4x / legacy csproj) in `crosswin run` (E13): legacy projects translated in the work copy, built with the .NET SDK, run on Wine Mono (bundled on macOS, auto-installed on Linux); Prefer32Bit fallback; verified on Linux with screenshots + xdotool input.
+- [ ] snap/input for .NET Framework apps (no startup hooks in Mono): host capture on Linux (xwd/xdotool), macOS needs Screen Recording permission or a Mono-side agent.
+- [ ] Visually verify .NET Framework apps on macOS (only process/log evidence so far).
 - [x] Deliver a runnable user-testing milestone, clear instructions and known limitations (README quick start; fresh-home setup verified).
 - [ ] User acceptance test of the milestone on their own apps.
 - [ ] After user feedback, fix observed defects and add narrowly targeted regression tests.
@@ -48,11 +51,16 @@ This is the single source of truth for ongoing work. Update it during implementa
 - **WPF `--gpu` capture white** on macOS with both methods — D3D/Vulkan presentation bypasses the window surface; unresolved, needs on-screen human check.
 - **"Flaky" nav clicks in PassMasterSuite** — false alarm: my zsh loop used `set -- $v`, which does not word-split in zsh, so the agent got `click` without coordinates. With bash, 3/3 navigation clicks worked. Lesson: drive multi-step input from bash, and read `input` output instead of discarding it.
 - **Icons in PassMasterSuite buttons still boxes after the font switch** — the global implicit TextBlock style (Segoe UI) applied to the TextBlock generated for string Button content. Fixed in the app with a local TextBlock style in the IconButton template.
+- **Hyphen and superscripts as boxes** — FontSubstitutes ignored by WPF; Wine `Fonts\Replacements` works (E10).
+- **Linux: PassMasterSuite "agent not answering" after click** — app had died: WPF FailFast because no "Arial" exists (fallback for unknown "Consolas"). Found via agent trace (`CROSSWIN_AGENT_TRACE=1`) + app.log. Fixed by core font replacements.
+- **Linux: snap showed old view** — window-DC stale on X11 for WPF; proven with xwd root comparison (E11). Fixed with X11 host recapture.
+- **Own test-script errors (3x)** — zsh `set --` without word splitting; `||` + `&` launch construct; wait-loop pattern `crosswin:` matching "crosswin: building CLI". Each produced misleading "failures". Use bash scripts and precise end markers.
 - **User font not visible to WPF** — copy only: not listed; registry entry under CurrentVersion\Fonts fixes it (E9).
 - **One `run` exited with 143 after 0.3 s** right after `wine reg delete`/`pkill`; immediate retry fine. Unexplained, watch for recurrence.
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log
+- 2026-11-03: .NET Framework support in `crosswin run`; samples/LegacyWinForms (old csproj, packages.config, Prefer32Bit, resx); Linux test script tests/linux/netfx.sh.
 - 2026-11-03: Fresh-home check (`CROSSWIN_HOME=<empty dir> ./crosswin setup`): SDK 10 + Wine download/verify + prefix + agent in 2:31 min; HelloWpf run + 2 clicks + snap correct.
 - 2026-11-02: Initial mission, autonomous workflow and handoff checklist established. Compared SwissHacks monorepo agent guidance; added Superpowers routing and debugging escalation.
 - 2026-11-03: Rosetta 2 installed (user approved). Private .NET 8 + 10 SDKs, Wine 11.21, prefix. Samples, agent, CLI (`doctor/setup/inspect/run/snap/input`) implemented and verified end to end on macOS arm64.

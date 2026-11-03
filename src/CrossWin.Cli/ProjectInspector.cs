@@ -13,6 +13,8 @@ public sealed record ProjectInfo(
     UiFramework Ui,
     string OutputType,
     string Platform,
+    bool Prefer32Bit,
+    string AssemblyName,
     IReadOnlyList<string> Packages,
     IReadOnlyList<string> Findings)
 {
@@ -107,8 +109,11 @@ public static class ProjectInspector
         string platform = Prop("PlatformTarget") is { Length: > 0 } pt ? pt
             : Prop("Prefer32Bit").Equals("true", StringComparison.OrdinalIgnoreCase) ? "x86" : "AnyCPU";
 
-        return new ProjectInfo(csproj, System.IO.Path.GetFileNameWithoutExtension(csproj), sdkStyle, tfms, ui,
-            Prop("OutputType") is { Length: > 0 } ot ? ot : "Library", platform, packages, findings);
+        string name = System.IO.Path.GetFileNameWithoutExtension(csproj);
+        return new ProjectInfo(csproj, name, sdkStyle, tfms, ui,
+            Prop("OutputType") is { Length: > 0 } ot ? ot : "Library", platform,
+            Prop("Prefer32Bit").Equals("true", StringComparison.OrdinalIgnoreCase),
+            Prop("AssemblyName") is { Length: > 0 } an ? an : name, packages, findings);
     }
 
     private static void ScanSource(string dir, List<string> findings)

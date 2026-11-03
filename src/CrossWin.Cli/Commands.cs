@@ -39,6 +39,15 @@ public static class Commands
         string? wine = env.Wine;
         Line(wine != null, "wine", wine != null ? $"{env.WineVersion} at {wine}" : "missing: run  ./crosswin setup");
         Line(env.PrefixReady, "prefix", env.PrefixReady ? env.Prefix : $"not initialised ({env.Prefix}): run  ./crosswin setup");
+        if (wine != null)
+        {
+            Line(null, "wine 32-bit", env.Wine32Available ? "available"
+                : "not available (32-bit .NET Framework apps run as 64-bit where possible; Debian/Ubuntu: apt install wine32:i386)");
+            string? mono = NetFramework.FindMono(env);
+            Line(mono != null ? true : null, "wine mono", mono != null
+                ? $"{mono} (for .NET Framework apps)"
+                : "not installed; only needed for .NET Framework apps: run  ./crosswin setup");
+        }
         if (env.WineFontsPresent == false)
             Line(false, "fonts", "Wine's core fonts (tahoma.ttf) not found; WinForms apps may crash with \"Font cannot be found\". Debian/Ubuntu: sudo apt install fonts-wine fonts-liberation");
         Line(File.Exists(env.AgentDll), "agent", File.Exists(env.AgentDll) ? env.AgentDll : "not built: run  ./crosswin setup");
@@ -71,6 +80,13 @@ public static class Commands
             if (!env.PrefixReady) throw new CrossWinException($"wineboot did not create {env.Prefix}; run with WINEDEBUG=err+all for details.");
         }
         SetWpfRendering(env, gpu: false);
+        EnsureFontReplacements(env);
+        if (NetFramework.FindMono(env) == null)
+        {
+            // Only .NET Framework apps need Wine Mono; a failure here must not block modern .NET apps.
+            try { NetFramework.InstallMono(env); }
+            catch (CrossWinException ex) { Console.WriteLine("Warning: Wine Mono not installed (.NET Framework apps will not run): " + ex.Message); }
+        }
 
         Console.WriteLine("Building CrossWin agent (in-process screenshot/input helper)...");
         var build = Proc.Run(env.Dotnet, new[] { "build", Path.Combine(repo, "tools", "CrossWin.Agent"), "-c", "Release", "-nologo",
@@ -122,6 +138,106 @@ public static class Commands
     private static void WaitWineServer(HostEnv env)
     {
         if (env.WineServer is { } ws) Proc.Run(ws, new[] { "-w" }, env.WineEnv());
+    }
+
+    // Windows fonts that apps name but the host may lack, with host fonts to stand in for them (first available
+    // wins; skipped when the host has the Windows font itself). Two WPF behaviours make this essential:
+    //  - an unresolvable family falls back to "Arial", and if Arial is missing WPF calls FailFast (process dies);
+    //  - the per-character fallback chain starts with "Segoe UI" / "Segoe UI Symbol"; without them even "-" can
+    //    render as a box and missing glyphs are not substituted.
+    private static readonly (string Windows, string[] Mac, string[] Linux)[] FontReplacements =
+    {
+        ("Arial", new[] { "Helvetica" }, new[] { "Liberation Sans", "DejaVu Sans", "Noto Sans" }),
+        ("Times New Roman", new[] { "Times" }, new[] { "Liberation Serif", "DejaVu Serif", "Noto Serif" }),
+        ("Courier New", new[] { "Courier" }, new[] { "Liberation Mono", "DejaVu Sans Mono", "Noto Sans Mono" }),
+        ("Consolas", new[] { "Menlo", "Monaco" }, new[] { "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono" }),
+        ("Segoe UI", new[] { "Helvetica Neue", "Arial Unicode MS", "Arial" }, new[] { "Noto Sans", "DejaVu Sans", "Liberation Sans" }),
+        ("Segoe UI Light", new[] { "Helvetica Neue", "Arial" }, new[] { "Noto Sans", "DejaVu Sans", "Liberation Sans" }),
+        ("Segoe UI Semibold", new[] { "Helvetica Neue", "Arial" }, new[] { "Noto Sans", "DejaVu Sans", "Liberation Sans" }),
+        ("Segoe UI Symbol", new[] { "Arial Unicode MS", "Lucida Grande" }, new[] { "DejaVu Sans", "Noto Sans Symbols2", "Noto Sans" }),
+    };
+
+    /// <summary>
+    /// Wine's own HKCU\Software\Wine\Fonts\Replacements is honoured by its DirectWrite (and so by WPF);
+    /// the Windows FontSubstitutes key is not.
+    /// </summary>
+    private static void EnsureFontReplacements(HostEnv env)
+    {
+        var host = HostFontFamilies(env);
+        var chosen = FontReplacements
+            .Where(r => !host.Contains(r.Windows))
+            .Select(r => (r.Windows, Host: (env.IsMac ? r.Mac : r.Linux).FirstOrDefault(host.Contains)))
+            .Where(r => r.Host != null)
+            .ToList();
+        string marker = Path.Combine(env.Prefix, ".crosswin-font-replacements");
+        string wanted = string.Join("\n", chosen.Select(r => $"{r.Windows}={r.Host}"));
+        if (File.Exists(marker) && File.ReadAllText(marker) == wanted) return;
+        foreach (var (windows, hostFont) in chosen)
+        {
+            var r = Proc.Run(env.Wine!, new[] { "reg", "add", @"HKCU\Software\Wine\Fonts\Replacements", "/v", windows,
+                "/t", "REG_SZ", "/d", hostFont!, "/f" }, env.WineEnv());
+            if (r.ExitCode != 0) throw new CrossWinException($"Could not set font replacement {windows} -> {hostFont}:\n" + r.Output);
+            Console.WriteLine($"    font: \"{windows}\" -> host font \"{hostFont}\"");
+        }
+        if (!host.Contains("Arial") && !chosen.Any(c => c.Windows == "Arial"))
+            Console.WriteLine("    font: WARNING no Arial substitute found; WPF apps may abort with \"Unrecoverable system error\". Install fonts-liberation.");
+        File.WriteAllText(marker, wanted);
+    }
+
+    private static HashSet<string> HostFontFamilies(HostEnv env)
+    {
+        var families = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (env.IsMac)
+        {
+            // Font files of the candidates above; Wine's mac driver exposes these system fonts by family name.
+            var files = new Dictionary<string, string>
+            {
+                ["Helvetica Neue"] = "/System/Library/Fonts/HelveticaNeue.ttc",
+                ["Helvetica"] = "/System/Library/Fonts/Helvetica.ttc",
+                ["Arial Unicode MS"] = "/Library/Fonts/Arial Unicode.ttf",
+                ["Arial"] = "/System/Library/Fonts/Supplemental/Arial.ttf",
+                ["Times New Roman"] = "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+                ["Times"] = "/System/Library/Fonts/Times.ttc",
+                ["Courier New"] = "/System/Library/Fonts/Supplemental/Courier New.ttf",
+                ["Courier"] = "/System/Library/Fonts/Courier.ttc",
+                ["Menlo"] = "/System/Library/Fonts/Menlo.ttc",
+                ["Monaco"] = "/System/Library/Fonts/Monaco.ttf",
+                ["Lucida Grande"] = "/System/Library/Fonts/LucidaGrande.ttc",
+            };
+            foreach (var (family, file) in files) if (File.Exists(file)) families.Add(family);
+        }
+        else
+        {
+            var r = Proc.Run("fc-list", new[] { ":", "family" });
+            if (r.ExitCode == 0)
+                foreach (string line in r.Output.Split('\n'))
+                    foreach (string family in line.Split(','))
+                        if (family.Trim().Length > 0) families.Add(family.Trim());
+            // fc-list (package fontconfig) is not always installed; Wine still finds fonts via libfontconfig.
+            var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["NotoSans-Regular.ttf"] = "Noto Sans",
+                ["DejaVuSans.ttf"] = "DejaVu Sans",
+                ["LiberationSans-Regular.ttf"] = "Liberation Sans",
+                ["NotoSansSymbols2-Regular.ttf"] = "Noto Sans Symbols2",
+                ["LiberationSerif-Regular.ttf"] = "Liberation Serif",
+                ["LiberationMono-Regular.ttf"] = "Liberation Mono",
+                ["DejaVuSansMono.ttf"] = "DejaVu Sans Mono",
+                ["DejaVuSerif.ttf"] = "DejaVu Serif",
+                ["NotoSansMono-Regular.ttf"] = "Noto Sans Mono",
+                ["NotoSerif-Regular.ttf"] = "Noto Serif",
+                ["Arial.ttf"] = "Arial",
+                ["arial.ttf"] = "Arial",
+            };
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            foreach (string dir in new[] { "/usr/share/fonts", "/usr/local/share/fonts", Path.Combine(home, ".local/share/fonts"), Path.Combine(home, ".fonts") })
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (string file in Directory.EnumerateFiles(dir, "*.ttf", SearchOption.AllDirectories))
+                    if (files.TryGetValue(Path.GetFileName(file), out string? family)) families.Add(family);
+            }
+        }
+        return families;
     }
 
     /// <summary>WPF hardware rendering goes through Wine's D3D9 translation; software rendering is the verified path.</summary>
@@ -196,21 +312,49 @@ public static class Commands
         string src = Path.Combine(work, "src");
         string output = Path.Combine(work, "out");
         string rid = info.Platform.Equals("x86", StringComparison.OrdinalIgnoreCase) ? "win-x86" : "win-x64";
+        bool netFramework = info.IsNetFramework || !info.SdkStyle;
+
+        if (netFramework && NetFramework.FindMono(env) == null)
+            throw new CrossWinException("This is a .NET Framework app and Wine Mono is not installed. Run  ./crosswin setup  first.");
 
         if (!noBuild)
         {
             Console.WriteLine($"==> Copying sources to isolated work dir {src}");
             Mirror(sourceRoot, src);
             string projectCopy = Path.Combine(src, Path.GetRelativePath(sourceRoot, info.Path));
-            Console.WriteLine($"==> Building {rid} self-contained ({info.ChosenTfm}) — log: {Path.Combine(work, "build.log")}");
-            if (!Build(env, projectCopy, info.ChosenTfm!, rid, output, Path.Combine(work, "build.log")))
-                return 3;
+            string log = Path.Combine(work, "build.log");
+            if (netFramework)
+            {
+                foreach (string w in NetFramework.ShadowLegacyProjects(src)) Console.WriteLine("    warning: " + w);
+                string tfm = NetFramework.ToTfm(info.ChosenTfm ?? "v4.7.2");
+                var command = new List<string> { "build", projectCopy, "-c", "Debug", "-f", tfm };
+                bool wants32 = info.Platform.Equals("x86", StringComparison.OrdinalIgnoreCase) || info.Prefer32Bit;
+                if (wants32 && !env.Wine32Available)
+                {
+                    if (info.Platform.Equals("x86", StringComparison.OrdinalIgnoreCase))
+                        throw new CrossWinException("This app targets x86 (32-bit) but this Wine has no 32-bit support. Install it (Debian/Ubuntu: sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine32:i386) and rerun.");
+                    // AnyCPU + Prefer32Bit: pure managed code behaves the same as a 64-bit process.
+                    command.Add("-p:Prefer32Bit=false");
+                    Console.WriteLine("    warning: app prefers 32-bit but this Wine has no 32-bit support; running it as 64-bit (AnyCPU). Native 32-bit DLLs would fail; install wine32 to keep 32-bit.");
+                }
+                Console.WriteLine($"==> Building .NET Framework app ({tfm}) with the .NET SDK — log: {log}");
+                if (!Build(env, command.ToArray(), output, log))
+                    return 3;
+            }
+            else
+            {
+                Console.WriteLine($"==> Building {rid} self-contained ({info.ChosenTfm}) — log: {log}");
+                if (!Build(env, new[] { "publish", projectCopy, "-c", "Debug", "-f", info.ChosenTfm!, "-r", rid, "--self-contained", "true",
+                        "-p:PublishSingleFile=false", "-p:PublishTrimmed=false" }, output, log))
+                    return 3;
+            }
         }
 
         string? exe = FindExe(output, info);
         if (exe == null) throw new CrossWinException($"Build produced no .exe in {output}.");
 
         SetWpfRendering(env, gpu);
+        EnsureFontReplacements(env);
         SyncUserFonts(env);
         return Launch(env, info, exe, appArgs, snapAfter, gpu);
     }
@@ -302,14 +446,13 @@ public static class Commands
         }
     }
 
-    private static bool Build(HostEnv env, string project, string tfm, string rid, string output, string logPath)
+    private static bool Build(HostEnv env, string[] command, string output, string logPath)
     {
         using var log = new StreamWriter(logPath);
         var errors = new List<string>();
         int warnings = 0;
         var buildEnv = new Dictionary<string, string> { ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1", ["DOTNET_NOLOGO"] = "1" };
-        int code = Proc.Stream(env.Dotnet, new[] { "publish", project, "-c", "Debug", "-f", tfm, "-r", rid, "--self-contained", "true",
-            "-p:EnableWindowsTargeting=true", "-p:PublishSingleFile=false", "-p:PublishTrimmed=false", "-o", output, "-nologo" }, line =>
+        int code = Proc.Stream(env.Dotnet, command.Concat(new[] { "-p:EnableWindowsTargeting=true", "-o", output, "-nologo" }), line =>
         {
             log.WriteLine(line);
             if (line.Contains(": error ")) { if (!errors.Contains(line.Trim())) errors.Add(line.Trim()); }
@@ -325,8 +468,8 @@ public static class Commands
         foreach (string e in errors.Take(15)) Console.Error.WriteLine("  " + e);
         if (errors.Any(e => e.Contains("NETSDK1045")))
             Console.Error.WriteLine("Hint: the project needs a newer .NET SDK than CrossWin installed; rerun ./crosswin after updating (see README).");
-        if (errors.Any(e => e.Contains("MSB4019") || e.Contains("Microsoft.WinFX.targets")))
-            Console.Error.WriteLine("Hint: legacy .NET Framework project files cannot be built by the .NET SDK on macOS/Linux yet.");
+        if (errors.Any(e => e.Contains("MSB4019")))
+            Console.Error.WriteLine("Hint: the project imports MSBuild targets that only exist on Windows (Visual Studio); see the warnings above.");
         return false;
     }
 
@@ -340,7 +483,9 @@ public static class Commands
             string exe = cfg[..^".runtimeconfig.json".Length] + ".exe";
             if (File.Exists(exe)) return exe;
         }
-        return null;
+        // .NET Framework apps have no runtimeconfig; use the project's assembly name.
+        string byName = Path.Combine(output, info.AssemblyName + ".exe");
+        return File.Exists(byName) ? byName : null;
     }
 
     private static int Launch(HostEnv env, ProjectInfo info, string exe, List<string> appArgs, int? snapAfter, bool gpu)
@@ -409,7 +554,7 @@ public static class Commands
                 if (snapAfter is { } s)
                 {
                     Thread.Sleep(TimeSpan.FromSeconds(s));
-                    foreach (string line in RequestAgent(session, "snap", "", p)) Console.WriteLine("==> snap: " + line);
+                    foreach (string line in RecaptureX11(env, RequestAgent(session, "snap", "", p))) Console.WriteLine("==> snap: " + line);
                 }
             });
         }
@@ -433,9 +578,39 @@ public static class Commands
     public static int Snap(HostEnv env)
     {
         string session = CurrentSession(env);
-        var lines = RequestAgent(session, "snap", "", null);
+        var lines = RecaptureX11(env, RequestAgent(session, "snap", "", null));
         foreach (string line in lines) Console.WriteLine(line);
         return lines.Count > 0 && !lines[0].StartsWith("ERROR") ? 0 : 1;
+    }
+
+    /// <summary>
+    /// On Wine's X11 driver the agent's window-DC capture of WPF windows can be stale (shows the view before a
+    /// navigation, while the X server shows the new one). X11 lets us read the real screen without permissions,
+    /// so crop each window from a root capture when xwd + ImageMagick are available.
+    /// </summary>
+    private static List<string> RecaptureX11(HostEnv env, List<string> lines)
+    {
+        if (!env.IsLinux || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"))) return lines;
+        string? xwd = HostEnv.FindOnPath("xwd");
+        string? convert = HostEnv.FindOnPath("magick") ?? HostEnv.FindOnPath("convert");
+        if (xwd == null || convert == null)
+        {
+            if (lines.Any(l => !l.StartsWith("ERROR")))
+                lines.Add("WARNING: X11 host capture unavailable (install x11-apps and imagemagick); WPF images may show an older state.");
+            return lines;
+        }
+        var result = new List<string>();
+        foreach (string line in lines)
+        {
+            string[] f = line.Split('\t');
+            if (f.Length < 5 || line.StartsWith("ERROR")) { result.Add(line); continue; }
+            string[] size = f[1].Split('x'), at = f[4].Split(',');
+            string crop = $"{size[0]}x{size[1]}+{at[0]}+{at[1]}";
+            var r = Proc.Run("/bin/sh", new[] { "-c", "\"$0\" -root -silent | \"$1\" xwd:- -crop \"$2\" +repage \"png:$3\"", xwd, convert, crop, f[0] });
+            if (r.ExitCode == 0) { f[3] = "x11-screen"; result.Add(string.Join('\t', f)); }
+            else result.Add(line + "\t(x11 capture failed: " + r.Output.Trim().Split('\n')[0] + ")");
+        }
+        return result;
     }
 
     public static int Input(HostEnv env, string[] commands)

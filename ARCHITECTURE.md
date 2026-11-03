@@ -76,6 +76,50 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   from Wine DirectWrite = macOS + Wine fonts only; even a `file:///C:/windows/Fonts/#Family` URI failed). After
   registering it under `HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts` WPF lists and renders it
   (verified with MIT Fluent System Icons). CrossWin now installs+registers every font in `~/.crosswin/fonts` on `run`.
+- **E10 font resolution under Wine** (2026-11-03, FontProbe app + PassMasterSuite, macOS and Linux container):
+  - Unknown family names ("Segoe UI", "SF Pro Text") render even ASCII "-" as a box on macOS; superscripts ⁴–⁹ are
+    boxes in Tahoma/Arial; there is no per-character fallback.
+  - `HKLM\...\FontSubstitutes` has no effect on WPF. `HKCU\Software\Wine\Fonts\Replacements` does: the replaced
+    family appears in `Fonts.SystemFontFamilies`, and because WPF's fallback chain starts with "Segoe UI"/"Segoe UI
+    Symbol", mapping those two also fixes missing glyphs in other fonts (verified: - ⁶ → ✓✔✕✗ ★☆ ▲▼ ½ ≤≥ äöü, regular
+    and semibold).
+  - **Linux crash:** WPF resolves an unknown family by falling back to "Arial" and calls `Environment.FailFast` if Arial
+    is missing ("Unrecoverable system error", `FontFamily.get_FirstFontFamily`, also `TypefaceMap.MapUnresolved
+    Characters`). The Ubuntu container has no Arial; PassMasterSuite died on opening the Cracker view ("Consolas").
+  - CrossWin now maps Arial/Times New Roman/Courier New/Consolas/Segoe UI(+Light/Semibold/Symbol) to host fonts when the
+    host lacks them (macOS: Helvetica Neue, Arial Unicode MS, Menlo; Linux: Liberation/DejaVu/Noto, detected via
+    fc-list or font files). Result: no crash on Linux; all PassMasterSuite views render on both hosts.
+- **E11 X11 capture staleness**: in the Linux container the agent's window-DC capture of PassMasterSuite still showed
+  Home while the X server (xwd root) showed Checker. `snap` on Linux now crops the window from an xwd root capture when
+  xwd + ImageMagick exist (method `x11-screen`), else warns. Synthetic clicks under Xvfb navigated in one run and not in
+  the next (a tooltip popup was open over the start cursor position) — unresolved.
+- **E12 .NET Framework app** (olivierluethy/TourneyMaster @ 52e4002, MIT; legacy csproj, net472 WPF, 2026-11-03):
+  - Build on macOS works with a *shadow* SDK-style project in an isolated copy (same Compile/Page/Resource items,
+    `TargetFramework=net472`, `UseWPF`, `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3) → real net472
+    `Turnierspielplan.exe`.
+  - Runtime: the Gcenx Wine build ships **Wine Mono 11.3.0** (`share/wine/mono`); the exe starts under it (process
+    alive, only fixme lines, no err). **Not visually verified**: startup hooks do not exist in Mono, cross-process
+    window-DC BitBlt returns FALSE, and host `screencapture` lacks Screen Recording permission.
+  - Same sources retargeted to net8.0-windows (shadow project) render correctly under CrossWin (bracket, combo boxes,
+    "Simulieren"). ComboBox drop-downs (AllowsTransparency popup) are not captured by the agent; one run showed two
+    slots filled after a single click, a controlled rerun showed only focus — unresolved.
+- **E13 .NET Framework in `crosswin run`** (2026-11-03):
+  - `NetFramework.ShadowLegacyProjects` rewrites every non-SDK `.csproj` in the work copy in place (ProjectReferences
+    keep resolving): TargetFrameworkVersion → TFM, Compile/Page/ApplicationDefinition/Resource/EmbeddedResource/None/
+    Content items with metadata, framework and HintPath references, packages.config → PackageReference (packages\
+    HintPaths dropped), Debug DefineConstants, Prefer32Bit/PlatformTarget; COMReference and custom imports → warnings.
+    Reference assemblies come from the SDK's implicit Microsoft.NETFramework.ReferenceAssemblies.
+  - Wine Mono: Gcenx macOS build bundles 11.3.0 in `share/wine/mono`. Ubuntu Wine 9.0 does not; `setup` reads the
+    required version from appwiz.cpl (ASCII in Gcenx builds, **UTF-16 only** in Ubuntu's) → 8.1.0, downloads the MSI
+    from dl.winehq.org and installs it with `msiexec /qn`.
+  - 32-bit: Ubuntu container without wine32 failed with `failed to load C:\windows\syswow64\ntdll.dll` for a
+    Prefer32Bit app. CrossWin detects 32-bit support (i386-windows/ntdll.dll) and builds AnyCPU+Prefer32Bit apps with
+    `-p:Prefer32Bit=false` when missing (warning); explicit x86 apps get an install hint.
+  - Evidence Linux (Ubuntu 24.04, Wine 9.0, Wine Mono 8.1.0): samples/LegacyWinForms renders ("Runtime:
+    4.0.30319.42000 (64-bit)"), xdotool typing + click → Newtonsoft.Json from packages.config serialises
+    `{"clicks":1,"note":"hallo Linux"}`; TourneyMaster (net472 WPF) renders its full UI. macOS: both build and run
+    (process alive, no err lines) — not visually verified (no capture path for Mono apps).
+  - Wine Mono WinExe processes print nothing to the terminal, so readiness markers via Console do not work there.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
