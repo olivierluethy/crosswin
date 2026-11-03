@@ -22,6 +22,9 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
                                                Send real mouse/keyboard input to the running app
                                                (X/Y = pixels in the snap image of the window client area)
 
+          crosswin mobile …                    Mobile apps (Flutter, React Native, Android) without
+                                               Android Studio or Xcode — see 'crosswin mobile help'
+
         Environment: CROSSWIN_HOME (default ~/.crosswin), CROSSWIN_WINE, WINEPREFIX, WINEDEBUG
         """);
     return 0;
@@ -37,6 +40,7 @@ try
         "run" when args.Length > 1 => Commands.Run(env, repo, args[1], args.Skip(2).ToArray()),
         "snap" => Commands.Snap(env),
         "input" when args.Length > 1 => Commands.Input(env, args.Skip(1).ToArray()),
+        "mobile" => CrossWin.Mobile.MobileCommands.Dispatch(env, args.Skip(1).ToArray()),
         _ => Fail($"Unknown or incomplete command: {string.Join(' ', args)}. Run 'crosswin help'."),
     };
 }

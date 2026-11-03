@@ -11,4 +11,9 @@
     <!-- The bootstrap installs only the latest LTS SDK; let the CLI run on it. -->
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Mobile/preview.html" LogicalName="preview.html" />
+    <EmbeddedResource Include="Mobile/Fixtures/crosswin_io/lib/io.dart" LogicalName="crosswin_io/io.dart" />
+    <EmbeddedResource Include="Mobile/Fixtures/crosswin_io/lib/flutter.dart" LogicalName="crosswin_io/flutter.dart" />
+  </ItemGroup>
 </Project>

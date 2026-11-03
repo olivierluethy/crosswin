@@ -111,10 +111,16 @@ public sealed class HostEnv
 
     public static string? FindOnPath(string name)
     {
-        foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':'))
+        // Windows: ';'-separated PATH and launchers with an extension (flutter.bat, npx.cmd, adb.exe).
+        string[] exts = OperatingSystem.IsWindows() ? new[] { ".exe", ".bat", ".cmd", "" } : new[] { "" };
+        foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
         {
-            string candidate = Path.Combine(dir, name);
-            if (File.Exists(candidate)) return candidate;
+            if (dir.Length == 0) continue;
+            foreach (string ext in exts)
+            {
+                string candidate = Path.Combine(dir, name + ext);
+                if (File.Exists(candidate)) return candidate;
+            }
         }
         return null;
     }
