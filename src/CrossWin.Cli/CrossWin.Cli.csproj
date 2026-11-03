@@ -11,4 +11,7 @@
     <!-- The bootstrap installs only the latest LTS SDK; let the CLI run on it. -->
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Mobile/preview.html" LogicalName="preview.html" />
+  </ItemGroup>
 </Project>

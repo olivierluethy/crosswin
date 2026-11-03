@@ -263,7 +263,7 @@ public static class Commands
     }
 
     /// <summary>Copy the whole repository so ProjectReferences and Directory.Build.props keep working.</summary>
-    private static string SourceRoot(string path)
+    internal static string SourceRoot(string path)
     {
         string dir = Path.GetFullPath(File.Exists(path) ? Path.GetDirectoryName(path)! : path);
         var git = Proc.Run("git", new[] { "-C", dir, "rev-parse", "--show-toplevel" });
@@ -272,18 +272,20 @@ public static class Commands
 
     private static readonly HashSet<string> Skipped = new() { "bin", "obj", ".git", ".vs", "node_modules", "packages" };
 
-    /// <summary>One-way mirror; the user's tree is only read, never written.</summary>
-    private static void Mirror(string from, string to)
+    /// <summary>One-way mirror; the user's tree is only read, never written. Skipped names (build outputs,
+    /// caches) are neither copied nor deleted in the destination, so caches built there survive.</summary>
+    internal static void Mirror(string from, string to, IReadOnlySet<string>? skip = null, IReadOnlySet<string>? keepTopLevel = null)
     {
+        skip ??= Skipped;
         Directory.CreateDirectory(to);
         var seen = new HashSet<string>();
         foreach (string entry in Directory.EnumerateFileSystemEntries(from))
         {
             string name = Path.GetFileName(entry);
-            if (Skipped.Contains(name)) continue;
+            if (skip.Contains(name)) continue;
             seen.Add(name);
             string dest = Path.Combine(to, name);
-            if (Directory.Exists(entry)) { Mirror(entry, dest); continue; }
+            if (Directory.Exists(entry)) { Mirror(entry, dest, skip); continue; }
             var s = new FileInfo(entry);
             var d = new FileInfo(dest);
             if (!d.Exists || d.Length != s.Length || d.LastWriteTimeUtc != s.LastWriteTimeUtc)
@@ -295,7 +297,7 @@ public static class Commands
         foreach (string entry in Directory.EnumerateFileSystemEntries(to))
         {
             string name = Path.GetFileName(entry);
-            if (seen.Contains(name) || Skipped.Contains(name)) continue;
+            if (seen.Contains(name) || skip.Contains(name) || keepTopLevel?.Contains(name) == true) continue;
             if (Directory.Exists(entry)) Directory.Delete(entry, recursive: true); else File.Delete(entry);
         }
     }
@@ -479,5 +481,5 @@ public static class Commands
         return false;
     }
 
-    private static string ShortHash(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..8].ToLowerInvariant();
+    internal static string ShortHash(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..8].ToLowerInvariant();
 }

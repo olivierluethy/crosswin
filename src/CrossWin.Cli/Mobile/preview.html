@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossWin device bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --mat: #24453b;
+    --mat-deep: #1b362e;
+    --line-minor: rgba(237, 239, 232, 0.055);
+    --line-major: rgba(237, 239, 232, 0.11);
+    --ink: #edefe8;
+    --ink-soft: #a3bdb1;
+    --marker: #f2d04b;
+    --alarm: #ff8f78;
+    --bezel: #151817;
+    --font: "Archivo", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background-color: var(--mat);
+    /* A self-healing cutting mat: 10 px minor grid, 50 px major grid. */
+    background-image:
+      linear-gradient(var(--line-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-major) 1px, transparent 1px),
+      linear-gradient(var(--line-minor) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-minor) 1px, transparent 1px);
+    background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+    color: var(--ink);
+    font-family: var(--font);
+    font-stretch: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--marker); outline-offset: 2px; }
+
+  /* ---------------------------------------------------------------- top bar */
+  header {
+    background: var(--mat-deep);
+    border-bottom: 1px solid var(--line-major);
+    padding: 12px 20px 10px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px 24px;
+    align-items: center;
+  }
+  .title { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+  h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    font-stretch: 75%;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .status { font-size: 14px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status::before {
+    content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ink-soft); margin-right: 8px; vertical-align: 1px;
+  }
+  .status[data-state="running"]::before { background: #7fd6a4; }
+  .status[data-state="reloading"]::before, .status[data-state="compiling"]::before { background: var(--marker); animation: pulse 1s ease-in-out infinite; }
+  .status[data-state="error"] { color: var(--alarm); }
+  .status[data-state="error"]::before { background: var(--alarm); }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    border: 1px solid var(--line-major);
+    background: transparent;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .btn:hover { background: rgba(237, 239, 232, 0.07); }
+  .btn.primary { background: var(--marker); color: #1b1a12; border-color: var(--marker); font-weight: 600; }
+  .zoom { font-variant-numeric: tabular-nums; font-size: 14px; min-width: 46px; text-align: center; color: var(--ink-soft); }
+
+  .picker { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .group > span { font-size: 13px; color: var(--ink-soft); margin-right: 2px; }
+  .chip {
+    border: 1px solid var(--line-major);
+    background: transparent;
+    border-radius: 999px;
+    padding: 3px 11px;
+    font-size: 13px;
+    font-stretch: 87%;
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { border-color: var(--marker); color: var(--marker); background: rgba(242, 208, 75, 0.08); }
+
+  /* ---------------------------------------------------------------- the bench */
+  main { flex: 1; overflow: auto; display: flex; }
+  .bench {
+    margin: auto;
+    padding: 28px 32px 22px;
+    display: flex;
+    gap: 40px;
+    align-items: flex-end;
+  }
+  .slot { display: flex; flex-direction: column; align-items: center; gap: 12px; flex: none; }
+  .holder { position: relative; flex: none; }
+  .device {
+    position: absolute; left: 0; bottom: 0;
+    transform-origin: left bottom;
+    background: var(--bezel);
+    box-shadow:
+      inset 0 0 0 1.5px #2c302e,
+      0 1px 0 rgba(255, 255, 255, 0.04),
+      0 24px 40px -18px rgba(0, 0, 0, 0.55);
+  }
+  .screen { position: absolute; overflow: hidden; background: #fff; }
+  .screen iframe { border: 0; display: block; width: 100%; height: 100%; background: #fff; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .sysbar {
+    position: absolute; left: 0; right: 0; top: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    color: #fff; mix-blend-mode: difference;
+    font-weight: 600; font-size: 15px; letter-spacing: 0.01em;
+  }
+  .sysbar .glyphs { display: flex; gap: 5px; align-items: center; }
+  .sysbar .glyphs i { display: block; background: currentColor; border-radius: 1.5px; }
+  .island { position: absolute; left: 50%; transform: translateX(-50%); background: #000; border-radius: 999px; }
+  .punch { position: absolute; left: 50%; transform: translateX(-50%); background: #000; border-radius: 50%; box-shadow: 0 0 0 2px #111; }
+  .home { position: absolute; left: 50%; transform: translateX(-50%); background: #fff; mix-blend-mode: difference; border-radius: 999px; }
+  .navkeys { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-around; align-items: center; color: #fff; mix-blend-mode: difference; font-size: 15px; }
+  .sebutton { position: absolute; left: 50%; transform: translateX(-50%); border-radius: 50%; border: 2px solid #2f3432; }
+  .curtain {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+    background: #f3f4f1; color: #3d4b45; font-size: 15px; padding: 24px; line-height: 1.45;
+  }
+  .label { text-align: center; line-height: 1.3; }
+  .label b { display: block; font-size: 15px; font-weight: 600; }
+  .label span { font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; font-stretch: 87%; }
+  .empty { margin: auto; color: var(--ink-soft); font-size: 16px; }
+
+  footer {
+    background: var(--mat-deep);
+    border-top: 1px solid var(--line-major);
+    padding: 7px 20px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    display: flex; gap: 24px; justify-content: space-between;
+  }
+  footer .err { color: var(--alarm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  @media (max-width: 640px) {
+    header { grid-template-columns: 1fr; padding: 10px 16px; }
+    .bench { padding: 20px 16px; gap: 24px; }
+    footer { padding: 7px 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .status::before { animation: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1 id="project">Device bench</h1>
+    <div class="status" id="status" data-state="compiling" role="status" aria-live="polite">Compiling …</div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="zoomOut" aria-label="Zoom out">−</button>
+    <div class="zoom" id="zoomLabel">100%</div>
+    <button class="btn" id="zoomIn" aria-label="Zoom in">+</button>
+    <button class="btn" id="fit">Fit</button>
+    <button class="btn primary" id="reload">Reload app</button>
+  </div>
+  <div class="picker" id="picker" aria-label="Devices"></div>
+</header>
+<main><div class="bench" id="bench"></div></main>
+<footer>
+  <span id="hint">Save a file in your project and every device reloads.</span>
+  <span class="err" id="err"></span>
+</footer>
+
+<script>
+(() => {
+  const DEFAULT = ["iphone-se", "iphone-16-pro-max", "galaxy-s24", "moto-e13"];
+  const $ = (id) => document.getElementById(id);
+  let devices = [], selected = [], zoom = null, version = -1, appUrl = null, lastState = null;
+
+  function readSelection() {
+    const fromUrl = new URLSearchParams(location.search).get("devices");
+    if (fromUrl && fromUrl !== "default") return fromUrl.split(",");
+    try { const s = JSON.parse(localStorage.getItem("cw-devices")); if (Array.isArray(s) && s.length) return s; } catch {}
+    return DEFAULT;
+  }
+  function saveSelection() {
+    try { localStorage.setItem("cw-devices", JSON.stringify(selected)); } catch {}
+    const u = new URL(location.href); u.searchParams.set("devices", selected.join(",")); history.replaceState(null, "", u);
+  }
+
+  // Frame geometry per kind of device, in CSS px at 100 %.
+  function frameOf(d) {
+    const tablet = d.width >= 700;
+    if (d.os === "ios" && d.id === "iphone-se") return { side: 18, top: 74, bottom: 74, outer: 46, inner: 4, kind: "se" };
+    if (d.os === "ios") return tablet ? { side: 18, top: 18, bottom: 18, outer: 30, inner: 18, kind: "ipad" }
+                                      : { side: 11, top: 11, bottom: 11, outer: 58, inner: 48, kind: "iphone" };
+    return tablet ? { side: 16, top: 16, bottom: 16, outer: 26, inner: 14, kind: "tab" }
+                  : { side: 9, top: 9, bottom: 9, outer: 34, inner: 26, kind: "android" };
+  }
+
+  function appSrc(d) {
+    if (!appUrl) return null;
+    const q = new URLSearchParams({ cw_os: d.os, cw_top: d.top, cw_bottom: d.bottom, cw_device: d.id, cw_v: version });
+    return appUrl + "?" + q;
+  }
+
+  function renderPicker() {
+    const groups = [["iPhone and iPad", "ios"], ["Android", "android"]];
+    $("picker").replaceChildren(...groups.map(([title, os]) => {
+      const g = document.createElement("div"); g.className = "group";
+      const t = document.createElement("span"); t.textContent = title; g.append(t);
+      for (const d of devices.filter((x) => x.os === os)) {
+        const b = document.createElement("button");
+        b.className = "chip"; b.textContent = d.name.replace(/^Samsung |^Google |^Motorola /, "");
+        b.title = `${d.name}, ${d.size}`;
+        b.setAttribute("aria-pressed", selected.includes(d.id));
+        b.onclick = () => {
+          selected = selected.includes(d.id) ? selected.filter((x) => x !== d.id) : [...selected, d.id];
+          saveSelection(); renderPicker(); renderBench();
+        };
+        g.append(b);
+      }
+      return g;
+    }));
+  }
+
+  function sysbar(d, f) {
+    const bar = document.createElement("div"); bar.className = "sysbar";
+    const h = d.top; bar.style.height = h + "px";
+    const pad = f.kind === "iphone" ? 34 : 16;
+    bar.style.padding = `${f.kind === "iphone" ? 6 : 0}px ${pad}px 0`;
+    const time = document.createElement("span"); time.textContent = d.os === "ios" ? "9:41" : "12:30";
+    const glyphs = document.createElement("span"); glyphs.className = "glyphs";
+    // Generic signal bars and a battery, drawn here (no platform artwork).
+    for (const [w, hh] of [[3, 5], [3, 7], [3, 9], [3, 11]]) { const i = document.createElement("i"); i.style.width = w + "px"; i.style.height = hh + "px"; glyphs.append(i); }
+    const bat = document.createElement("i"); bat.style.cssText = "width:22px;height:11px;border-radius:3px;margin-left:4px;opacity:.9";
+    glyphs.append(bat);
+    bar.append(time, glyphs);
+    return bar;
+  }
+
+  function renderBench() {
+    const bench = $("bench");
+    const list = selected.map((id) => devices.find((d) => d.id === id)).filter(Boolean);
+    if (!list.length) {
+      bench.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "Choose a device above to put it on the bench." }));
+      return;
+    }
+    const scale = zoom ?? fitScale(list);
+    $("zoomLabel").textContent = Math.round(scale * 100) + "%";
+    bench.replaceChildren(...list.map((d) => {
+      const f = frameOf(d);
+      const W = d.width + 2 * f.side, H = d.height + f.top + f.bottom;
+      const slot = document.createElement("div"); slot.className = "slot";
+      const holder = document.createElement("div"); holder.className = "holder";
+      holder.style.width = W * scale + "px"; holder.style.height = H * scale + "px";
+      const dev = document.createElement("div"); dev.className = "device";
+      dev.style.cssText = `width:${W}px;height:${H}px;border-radius:${f.outer}px;transform:scale(${scale})`;
+      const screen = document.createElement("div"); screen.className = "screen";
+      screen.style.cssText = `left:${f.side}px;top:${f.top}px;width:${d.width}px;height:${d.height}px;border-radius:${f.inner}px`;
+      const src = appSrc(d);
+      if (src) {
+        const fr = document.createElement("iframe");
+        fr.title = `${lastState?.project ?? "App"} on ${d.name}`;
+        fr.dataset.device = d.id;
+        const wait = document.createElement("div"); wait.className = "curtain"; wait.textContent = "Starting …";
+        screen.append(fr, wait);
+      } else {
+        const c = document.createElement("div"); c.className = "curtain";
+        c.textContent = lastState?.error ? "The app did not compile. Details are in the bar below." : `Compiling ${lastState?.project ?? "the app"} …`;
+        screen.append(c);
+      }
+      const ov = document.createElement("div"); ov.className = "overlay";
+      if (d.top >= 20) ov.append(sysbar(d, f));
+      if (f.kind === "iphone") {
+        const isl = document.createElement("div"); isl.className = "island";
+        isl.style.cssText = "top:11px;width:124px;height:36px"; ov.append(isl);
+      } else if (f.kind === "android") {
+        const p = document.createElement("div"); p.className = "punch";
+        p.style.cssText = "top:11px;width:12px;height:12px"; ov.append(p);
+      }
+      if (d.os === "ios" && d.bottom > 0) {
+        const hm = document.createElement("div"); hm.className = "home";
+        hm.style.cssText = `bottom:8px;width:${Math.round(d.width * 0.36)}px;height:5px`; ov.append(hm);
+      } else if (d.os === "android" && d.bottom >= 40) {
+        const nk = document.createElement("div"); nk.className = "navkeys"; nk.style.height = d.bottom + "px";
+        nk.innerHTML = "<span>◁</span><span>○</span><span>▢</span>"; ov.append(nk);
+      } else if (d.os === "android" && d.bottom > 0) {
+        const hm = document.createElement("div"); hm.className = "home";
+        hm.style.cssText = `bottom:9px;width:108px;height:4px`; ov.append(hm);
+      }
+      screen.append(ov);
+      dev.append(screen);
+      if (f.kind === "se") {
+        const hb = document.createElement("div"); hb.className = "sebutton";
+        hb.style.cssText = `bottom:${(f.bottom - 50) / 2}px;width:50px;height:50px`; dev.append(hb);
+      }
+      holder.append(dev);
+      const label = document.createElement("div"); label.className = "label";
+      label.innerHTML = `<b></b><span></span>`;
+      label.querySelector("b").textContent = d.name;
+      label.querySelector("span").textContent = `${d.size}, ${d.os === "ios" ? "iOS behaviour" : "Android behaviour"}`;
+      slot.append(holder, label);
+      return slot;
+    }));
+    loadFrames();
+  }
+
+  // Debug builds fetch over a thousand modules per app instance; starting every frame at once exhausts the
+  // browser's request budget. Frames start one after another — the later ones are served from cache.
+  let loadRun = 0;
+  async function loadFrames() {
+    const run = ++loadRun;
+    for (const fr of document.querySelectorAll("iframe[data-device]")) {
+      if (run !== loadRun) return;
+      const d = devices.find((x) => x.id === fr.dataset.device);
+      if (!d) continue;
+      fr.src = appSrc(d);
+      await started(fr, 90000);
+      fr.nextElementSibling?.classList?.contains("curtain") && fr.nextElementSibling.remove();
+    }
+  }
+
+  function started(fr, timeout) {
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const tick = () => {
+        let ok = false;
+        try { ok = !!fr.contentDocument?.querySelector("flutter-view, flt-glass-pane"); } catch {}
+        if (ok || Date.now() - t0 > timeout) return setTimeout(resolve, ok ? 400 : 0);
+        setTimeout(tick, 250);
+      };
+      tick();
+    });
+  }
+
+  function fitScale(list) {
+    const avail = document.querySelector("main").clientHeight - 28 - 22 - 56;
+    const tallest = Math.max(...list.map((d) => { const f = frameOf(d); return d.height + f.top + f.bottom; }));
+    return Math.max(0.3, Math.min(1, avail / tallest));
+  }
+
+  function reloadFrames() { loadFrames(); }
+
+  async function poll() {
+    try {
+      const s = await (await fetch("/crosswin/api/state", { cache: "no-store" })).json();
+      const first = !lastState;
+      const urlArrived = !appUrl && s.appUrl;
+      lastState = s; appUrl = s.appUrl;
+      if (first) {
+        devices = s.devices;
+        selected = readSelection().filter((id) => devices.some((d) => d.id === id));
+        $("project").textContent = s.project;
+        document.title = `${s.project} on the CrossWin bench`;
+        renderPicker();
+      }
+      const st = s.error ? "error" : s.status;
+      $("status").dataset.state = st;
+      $("status").textContent = { running: "Running", reloading: "Reloading …", compiling: "Compiling …", stopped: "Stopped", error: "Build error" }[st] ?? st;
+      $("err").textContent = s.error ?? "";
+      if (first || urlArrived) { version = s.version; renderBench(); }
+      else if (s.version !== version) { version = s.version; reloadFrames(); }
+    } catch {
+      $("status").dataset.state = "error"; $("status").textContent = "Preview stopped";
+      $("err").textContent = "The crosswin preview command is not running.";
+    }
+    setTimeout(poll, 1000);
+  }
+
+  $("reload").onclick = () => fetch("/crosswin/api/reload", { method: "POST" });
+  $("zoomIn").onclick = () => { zoom = Math.min(1.5, (zoom ?? fitScale(selected.map((id) => devices.find((d) => d.id === id)).filter(Boolean))) + 0.1); renderBench(); };
+  $("zoomOut").onclick = () => { zoom = Math.max(0.3, (zoom ?? fitScale(selected.map((id) => devices.find((d) => d.id === id)).filter(Boolean))) - 0.1); renderBench(); };
+  $("fit").onclick = () => { zoom = null; renderBench(); };
+  let resizeTimer; addEventListener("resize", () => { if (zoom === null) { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderBench, 150); } });
+  poll();
+})();
+</script>
+</body>
+</html>
