@@ -72,3 +72,11 @@ CrossWin is **not** a reverse-engineering or application-cloning product. It sho
 - Avoid premature platform breadth: a complete reliable Flutter/Android or web workflow is more valuable than superficial support for ten runtimes. Preserve current WPF/WinForms paths and prevent regressions with focused smoke tests.
 - Automate reversible actions; ask for explicit permission when required for device trust, credentials, paid services, publishing, destructive operations or sensitive data. Surface blockers with the shortest actionable user instruction and keep independent work moving.
 - End a session with a **handoff contract** in PROGRESS.md: what works, evidence, known limitations, next command, next unchecked issue-linked task. No ambiguous “almost done” claims.
+
+## Non-negotiable audience and product acceptance
+CrossWin is a **standalone product for everyone**, explicitly including non-developers who have never used Claude Code, terminals, Flutter, ADB, Playwright or MCP. This is a core requirement, not an optional future audience or a question to reopen. Take inspiration from the accessibility and ease of use the user associates with Grok Bot, while creating CrossWin's own identity.
+- First-run success must be possible through the GUI without an AI agent, terminal, hand-written tests or knowledge of developer terminology. Detect and explain supported project types; provide an obvious next action and plain-language error recovery.
+- The engine and UI must function independently of Claude Code and other AI providers. AI agents are optional clients of the same underlying capabilities, never a prerequisite.
+- Advanced developer controls may be progressively disclosed, but must not dominate the beginner experience. Validate onboarding with a novice usability scenario and measure time to first successful preview.
+- Do not claim that *any* arbitrary application runs without prerequisites: identify unsupported projects/devices and guide users through unavoidable OS permissions or platform SDK constraints.
+- Evaluate design, architecture, roadmap and acceptance decisions against this audience requirement before marking features complete.
