@@ -42,6 +42,7 @@ public static class ProjectInspector
 
     private static readonly (Regex Pattern, string Message)[] RiskySource =
     {
+        (new Regex(@"Segoe (MDL2 Assets|Fluent Icons)"), "Draws icons with a proprietary Windows icon font (Segoe MDL2 Assets / Segoe Fluent Icons) that Wine lacks; icons show as empty boxes. Copy segmdl2.ttf / SegoeIcons.ttf from a licensed Windows (C:\\Windows\\Fonts) into ~/.crosswin/fonts, or embed an open icon font in the app."),
         (new Regex(@"\bWebBrowser\b"), "Uses the WebBrowser control (IE/MSHTML); Wine needs Wine Gecko which CrossWin does not install yet."),
         (new Regex(@"\bD3DImage\b"), "Uses D3DImage (Direct3D interop in WPF); untested."),
         (new Regex(@"<MediaElement\b"), "Plays media with MediaElement (Windows Media Player / Media Foundation); usually missing under Wine."),

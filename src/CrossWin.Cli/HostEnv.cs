@@ -19,6 +19,8 @@ public sealed class HostEnv
     public string AgentDll => Path.Combine(Home, "tools", "agent", "CrossWin.Agent.dll");
     public string WorkRoot => Path.Combine(Home, "work");
     public string SessionFile => Path.Combine(Home, "session", "current");
+    /// <summary>User-supplied fonts (e.g. from a licensed Windows) copied into the prefix before each run.</summary>
+    public string UserFonts => Path.Combine(Home, "fonts");
 
     /// <summary>Wine launcher: CROSSWIN_WINE, the CrossWin-managed macOS build, then PATH.</summary>
     public string? Wine

@@ -30,6 +30,8 @@ Other commands:
 
 How it works: CrossWin copies your repo to `~/.crosswin/work/…` (your files are never modified), builds a self-contained `win-x64` publish with the .NET SDK on macOS/Linux, and runs the real `.exe` under Wine. WPF uses software rendering by default (`--gpu` to try hardware rendering, unverified). First start of an app takes ~10–15 s.
 
+Missing Windows fonts (e.g. the icon font `Segoe MDL2 Assets`): copy the `.ttf` from a Windows installation you are licensed for (`C:\Windows\Fonts\segmdl2.ttf`) into `~/.crosswin/fonts/`; `run` installs and registers it in the Wine prefix. CrossWin does not ship Microsoft fonts.
+
 Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; WebView2/WebBrowser, COM components, Direct3D interop and native third-party DLLs are flagged by `inspect` and likely to fail; .NET Framework 4.x is reported as unsupported. See [ARCHITECTURE.md](ARCHITECTURE.md) for evidence.
 
 ## Start development with Claude Code

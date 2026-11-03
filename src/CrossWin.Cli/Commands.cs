@@ -211,7 +211,38 @@ public static class Commands
         if (exe == null) throw new CrossWinException($"Build produced no .exe in {output}.");
 
         SetWpfRendering(env, gpu);
+        SyncUserFonts(env);
         return Launch(env, info, exe, appArgs, snapAfter, gpu);
+    }
+
+    /// <summary>
+    /// Installs user-supplied fonts into the prefix. WPF under Wine enumerates fonts through DirectWrite, which only
+    /// sees fonts registered under HKLM\...\CurrentVersion\Fonts — copying the file alone is not enough.
+    /// CrossWin never ships proprietary fonts itself.
+    /// </summary>
+    private static void SyncUserFonts(HostEnv env)
+    {
+        if (!Directory.Exists(env.UserFonts)) return;
+        string target = Path.Combine(env.Prefix, "drive_c", "windows", "Fonts");
+        string marker = Path.Combine(env.Prefix, ".crosswin-fonts");
+        var registered = File.Exists(marker) ? File.ReadAllLines(marker).ToHashSet() : new HashSet<string>();
+        Directory.CreateDirectory(target);
+        foreach (string font in Directory.EnumerateFiles(env.UserFonts)
+                     .Where(f => f.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase)))
+        {
+            string name = Path.GetFileName(font);
+            string dest = Path.Combine(target, name);
+            bool copied = !File.Exists(dest) || new FileInfo(dest).Length != new FileInfo(font).Length;
+            if (copied) File.Copy(font, dest, overwrite: true);
+            if (!copied && registered.Contains(name)) continue;
+            var r = Proc.Run(env.Wine!, new[] { "reg", "add", @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+                "/v", Path.GetFileNameWithoutExtension(name) + (name.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) ? " (OpenType)" : " (TrueType)"),
+                "/t", "REG_SZ", "/d", name, "/f" }, env.WineEnv());
+            if (r.ExitCode != 0) { Console.WriteLine($"    font: could not register {name}: {r.Output.Trim()}"); continue; }
+            registered.Add(name);
+            Console.WriteLine($"    font: installed {name} into the Wine prefix");
+        }
+        File.WriteAllLines(marker, registered);
     }
 
     private static ProjectInfo SelectProject(string path, string? name)

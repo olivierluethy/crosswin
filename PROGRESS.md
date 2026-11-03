@@ -8,7 +8,9 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [x] Own minimal samples: `samples/HelloWinForms`, `samples/HelloWpf` (net8.0-windows, part of this repo).
 - [x] Third-party WPF: microsoft/WPF-Samples (MIT) CalculatorDemo and WPFGallery (.NET 10, Fluent) run and respond to input (E6).
 - [ ] Third-party WinForms sample (e.g. dotnet/winforms samples or a small MIT app) through `./crosswin run`.
-- [ ] Icon-font gap (Segoe Fluent Icons / MDL2 missing): document "bring your own font" path or find a license-compatible substitute.
+- [x] Icon-font gap: `inspect` flags Segoe MDL2 Assets / Segoe Fluent Icons; `~/.crosswin/fonts` is installed and registered on `run` (E9). No license-compatible drop-in with identical code points known.
+- [ ] PassMasterSuite: verify icons once the user supplies segmdl2.ttf (or the app embeds an open icon font); source build error reported to user (E8).
+- [ ] Synthetic RadioButton clicks sometimes ignored after a navigation (E8): reproduce deterministically; try explicit MOUSEEVENTF_MOVE + down/up delay.
 - [x] Minimal CLI: `./crosswin inspect` reports framework, TFM, UI stack, platform, packages, risks and a verdict.
 - [x] Real WinForms launch path on this Mac with logs (`./crosswin run`), verified interactively incl. clicks/typing (E3).
 - [x] WPF launch feasibility: **works with WPF software rendering** for the sample (XAML, binding, gradients, text input) (E4). GPU path (`--gpu`) launches but is not visually verified.
@@ -44,6 +46,8 @@ This is the single source of truth for ongoing work. Update it during implementa
 - **Linux: snap timed out** — not an agent bug: app crashed on `new Font("Segoe UI")` without Wine core fonts, and `winedbg --auto` kept the process alive. Fixed with doctor font check, crash hint, winedbg disabled, crash watchdog.
 - **Linux: agent snaps wrong** (children offset by non-client area; WPF black) — X11 driver differs from mac driver in PrintWindow. Fixed by reading the window DC, client-area coordinates.
 - **WPF `--gpu` capture white** on macOS with both methods — D3D/Vulkan presentation bypasses the window surface; unresolved, needs on-screen human check.
+- **User font not visible to WPF** — copy only: not listed; registry entry under CurrentVersion\Fonts fixes it (E9).
+- **One `run` exited with 143 after 0.3 s** right after `wine reg delete`/`pkill`; immediate retry fine. Unexplained, watch for recurrence.
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log

@@ -62,6 +62,19 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   `run` prints the fix. **Crash finding:** Wine's `winedbg --auto` kept the crashed process alive; CrossWin now sets
   `WINEDLLOVERRIDES=winedbg.exe=d` and kills a lingering crashed process after 10 s.
   Not yet tested: real older x86_64 hardware, Wayland sessions, distro Wine older than 9.0.
+- **E8 PassMasterSuite** (olivierluethy/PassMasterSuite @ 968b329, MIT, net8.0-windows WPF, 2026-11-03):
+  - Build fails with CS0246 `ToggleButton` in Views/CrackerView.xaml.cs and Views/GeneratorView.xaml.cs — missing
+    `using System.Windows.Controls.Primitives;`. Compiler error in the source (same on Windows), not a CrossWin gap.
+    With the using added **only in the isolated work copy**, the app builds and runs: dark custom theme, Home cards,
+    Generator (password, slider, toggle chips, strength bar), Checker and Cracker views.
+  - Icons: all glyphs come from `Segoe MDL2 Assets` (proprietary) → empty boxes. U+2011 (non-breaking hyphen) also
+    renders as a box in the fallback for `Segoe UI`.
+  - Synthetic nav clicks (RadioButton) sometimes had no effect when sent ~2 s after a previous navigation; isolated
+    single clicks worked immediately. Unresolved; human clicks not yet compared.
+- **E9 user fonts**: a font copied into `C:\windows\Fonts` is *not* seen by WPF under Wine (Fonts.SystemFontFamilies
+  from Wine DirectWrite = macOS + Wine fonts only; even a `file:///C:/windows/Fonts/#Family` URI failed). After
+  registering it under `HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts` WPF lists and renders it
+  (verified with MIT Fluent System Icons). CrossWin now installs+registers every font in `~/.crosswin/fonts` on `run`.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
