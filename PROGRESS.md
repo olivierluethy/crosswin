@@ -107,3 +107,9 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - [ ] Validate that a first-time non-developer can launch CrossWin, open a supported sample project and reach a working preview using only guided GUI actions; record blockers and time-to-first-preview.
 - [ ] Ensure no Claude Code, agent account, terminal command or developer jargon is required for the core supported user journey.
 - [ ] Provide clear plain-language instructions for unavoidable permissions and unsupported platforms, with advanced controls progressively disclosed.
+
+## Post-baseline autonomous performance optimization — #5, #6
+- [ ] After one complete reliable GUI and agent test loop works, benchmark repeated cold/warm launch, interaction, diagnostics and time-to-verified-fix; record median/p95, resource cost and flakiness.
+- [ ] Profile actual slow stages, inventory third-party tools and tune their supported configurations before considering alternatives or forks.
+- [ ] Run controlled A/B comparisons for faster interaction/inspection paths on representative web/Flutter/Android targets; verify total loop speed, not isolated command speed.
+- [ ] Apply one reversible optimization at a time; retain only measured gains that pass regression, novice usability, security and maintainability checks. Record before/after and rollback path.
