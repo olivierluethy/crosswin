@@ -26,6 +26,20 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [ ] User acceptance test of the milestone on their own apps.
 - [ ] After user feedback, fix observed defects and add narrowly targeted regression tests.
 
+## Expansion roadmap — linked to issues (existing work remains intact)
+North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requirements: [#2](https://github.com/olivierluethy/crosswin/issues/2) diagnostics, adapters, hot reload, sessions; [#3](https://github.com/olivierluethy/crosswin/issues/3) screenshot/video; [#4](https://github.com/olivierluethy/crosswin/issues/4) zero-config onboarding; [#5](https://github.com/olivierluethy/crosswin/issues/5) desktop UX, device rotation, traces. Inspect each issue before implementation.
+
+- [ ] Reconcile existing code, commits, verified capabilities and #2–#6. Preserve checked WPF/WinForms items; identify next feasible working slice. (#6)
+- [ ] Implement a shared, privacy-aware agent session/diagnostics API with structured errors, bounded logs, target identity, UI tree and interaction history; verify with one actual backend. (#2, #5, #6)
+- [ ] Web adapter: launch/attach to React/Next/Vite or generic local web server, stream console/network/DOM/accessibility diagnostics and user interaction traces; reproduce and verify a real failure without manually writing Playwright tests. (#6)
+- [ ] Android Real Device Bridge: discover USB-connected device via ADB, show authorized/offline/unauthorized state; guide developer options, USB debugging and trust prompts without bypassing permissions. Install/launch an app, read logcat and UI hierarchy, execute fast batched gestures, correlate events to errors. (#2, #6)
+- [ ] Virtual-to-real continuity: replay supported test steps on an authorized physical device and compare errors, media behavior and latency. Do not promise process-state transfer. (#6)
+- [ ] Capture and benchmark screenshots/video, device connection, reload, gesture-to-diagnosis, CPU/RAM and image loading. Avoid needless screenshot loops; use visual checks when needed. (#3, #5, #6)
+- [ ] Non-coder UX: one-click target selection, honest runtime labels, desktop shell feasibility, managed dependencies and understandable permissions. (#4, #5, #6)
+- [ ] Investigate iOS physical-device requirements and restrictions, distinguishing real testing from App Store/Google Play publication. (#2, #6)
+
+**Next Start or Continue:** inspect git status and prior evidence, choose the next actionable unchecked vertical slice and implement it. Keep existing WPF/WinForms acceptance items active. If no authorized real Android device is attached, verify discovery/error handling and document the pending physical acceptance test rather than claiming success. After each meaningful change record the linked issue, commands, evidence, commit and exact next action.
+
 ## Current handoff
 **Status:** User-testable milestone. On macOS (Apple Silicon verified) and Linux x86_64 (container verified) `./crosswin run <repo>` builds unmodified modern-.NET WinForms/WPF apps and runs them interactively under Wine; Microsoft's CalculatorDemo and WPFGallery (.NET 10) work. `snap`/`input` give visual inspection and real input.
 
