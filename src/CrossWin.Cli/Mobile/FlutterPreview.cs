@@ -52,7 +52,11 @@ public sealed class FlutterPreview
     private void Sync()
     {
         Commands.Mirror(_p.Root, _src, MobileProject.MirrorSkip, Generated);
-        if (_shimmed.Count > 0) Fixtures.PreviewFakes.PatchPubspec(_src, _shimmed);
+        if (_shimmed.Count > 0)
+        {
+            Fixtures.PreviewFakes.PatchPubspec(_src, _shimmed.Where(Fixtures.PreviewFakes.Shimmed.Contains).ToList());
+            Fixtures.PreviewFakes.RewriteFileAccess(_src);
+        }
     }
 
     private void Prepare(string flutter)
@@ -84,9 +88,11 @@ public sealed class FlutterPreview
         import 'package:flutter/widgets.dart';
         import 'package:{{package}}/main.dart' as app;
 
+        import 'package:crosswin_io/io.dart' as cw;
+
         import 'crosswin_fakes.dart';
 
-        void main() {
+        Future<void> main() async {
           final q = Uri.base.queryParameters;
           debugDefaultTargetPlatformOverride =
               q['cw_os'] == 'android' ? TargetPlatform.android : TargetPlatform.iOS;
@@ -95,6 +101,8 @@ public sealed class FlutterPreview
             bottom: double.tryParse(q['cw_bottom'] ?? '') ?? 0,
           );
           _CrossWinBinding(insets);
+          // The frame's own phone storage (files the app wrote before), then the device plugins.
+          await cw.CrossWinFs.install(q['cw_device'] ?? 'default');
           installCrossWinFakes();
           debugPrint('crosswin: ${q['cw_device']} with ${debugDefaultTargetPlatformOverride!.name} behaviour, insets $insets');
           app.main();
@@ -263,6 +271,7 @@ public sealed class FlutterPreview
                 s.CopyTo(ctx.Response.OutputStream);
             }
             else if (_dataDir != null && Fixtures.PreviewFakes.TryServe(ctx, _dataDir)) { }
+            else if (Fixtures.PreviewFakes.TryServeStorage(ctx, Path.Combine(_work, "preview-fs"))) { }
             else if (_appUrl is { } app) Proxy(ctx, app);
             else ctx.Response.StatusCode = 503;
         }

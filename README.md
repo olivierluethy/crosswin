@@ -44,8 +44,9 @@ Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; 
 
 - **preview** (Flutter): the app compiled for the web inside device frames with each device's size, safe areas and
   iOS or Android behaviour; every saved file reloads all frames. Photo library, contacts and permissions are answered
-  with CrossWin's test data, so pickers work. Not real iOS: files (saving drafts, exports), ML Kit, notifications and
-  other native features need the emulator.
+  with CrossWin's test data, so pickers work. Each frame has its own phone storage: dart:io File/Directory (via
+  IOOverrides), path_provider and saving to the gallery work and are kept on the computer, so drafts and exports
+  survive reloads. Not real iOS: ML Kit, notifications, sharing and other native features need the emulator.
 - **run / seed** (Android): builds the APK in an isolated copy, reshapes one emulator to the chosen phone
   (`wm size`/`density`), installs it with permissions granted and adds test data once: ~90 generated photos with
   EXIF dates and GPS over several years, short videos, contacts with birthdays, PDFs in Downloads.

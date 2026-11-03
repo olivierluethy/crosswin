@@ -20,7 +20,7 @@ public static class PreviewFakes
     public static readonly string[] Shimmed = { "photo_manager", "flutter_contacts" };
 
     /// <summary>Federated plugins whose platform instance the preview replaces (their web version lacks the feature).</summary>
-    public static readonly string[] Replaced = { "permission_handler_platform_interface" };
+    public static readonly string[] Replaced = { "permission_handler_platform_interface", "path_provider_platform_interface" };
 
     private const string Marker = "# crosswin-preview-overrides";
 
@@ -49,7 +49,9 @@ public static class PreviewFakes
             if (Path.GetFullPath(root) != Path.GetFullPath(dest)) Vendor(root, dest);
             used.Add(name);
         }
+        WriteIoPackage(src);
         PatchPubspec(src, used.Where(Shimmed.Contains).ToList());
+        RewriteFileAccess(src);
         return used;
     }
 
@@ -91,6 +93,125 @@ public static class PreviewFakes
         File.WriteAllText(stamp, from);
     }
 
+    /// <summary>The browser stand-in for the app's dart:io file use (see crosswin_io/io.dart).</summary>
+    private static void WriteIoPackage(string src)
+    {
+        string dir = Path.Combine(src, ".crosswin", "packages", "crosswin_io");
+        Directory.CreateDirectory(Path.Combine(dir, "lib"));
+        File.WriteAllText(Path.Combine(dir, "pubspec.yaml"), """
+            name: crosswin_io
+            description: CrossWin preview stand-in for dart:io files (generated).
+            publish_to: none
+            environment:
+              sdk: '>=3.4.0 <4.0.0'
+            dependencies:
+              flutter:
+                sdk: flutter
+            """);
+        foreach (string res in new[] { "io.dart", "flutter.dart" })
+        {
+            using var s = typeof(PreviewFakes).Assembly.GetManifestResourceStream("crosswin_io/" + res)!;
+            using var r = new StreamReader(s);
+            string target = Path.Combine(dir, "lib", res);
+            string text = r.ReadToEnd();
+            if (!File.Exists(target) || File.ReadAllText(target) != text) File.WriteAllText(target, text);
+        }
+    }
+
+    /// <summary>
+    /// In the preview copy of the app's lib/: Image.file / FileImage use the storage-backed versions (Image.file
+    /// refuses to run on the web) and dart:io's Platform, which throws in a browser, follows the frame. File and
+    /// Directory need no change: IOOverrides routes them. Each file keeps the source's timestamp, so only real
+    /// edits recompile.
+    /// </summary>
+    public static void RewriteFileAccess(string src)
+    {
+        string lib = Path.Combine(src, "lib");
+        if (!Directory.Exists(lib)) return;
+        foreach (string f in Directory.EnumerateFiles(lib, "*.dart", SearchOption.AllDirectories))
+        {
+            string text = File.ReadAllText(f);
+            if (!text.Contains("Platform.") && !text.Contains("Image.file(") && !text.Contains("FileImage(") && !text.Contains("Isolate.run(")) continue;
+            DateTime mtime = File.GetLastWriteTimeUtc(f);
+            string t = text;
+            bool images = false;
+            t = Regex.Replace(t, @"(?<![\w.])Platform\.(isAndroid|isIOS|isMacOS|isWindows|isLinux|isFuchsia|operatingSystemVersion|operatingSystem|pathSeparator|localeName|numberOfProcessors|environment)\b",
+                m => { images = true; return "CrossWinPlatform." + m.Groups[1].Value; });
+            t = Regex.Replace(t, @"(?<![\w.])Isolate\.run(?=[<(])", _ => { images = true; return "CrossWinIsolate.run"; });
+            t = Regex.Replace(t, @"(?<![\w.])Image\.file\(", _ => { images = true; return "CrossWinImage.file("; });
+            t = Regex.Replace(t, @"(?<![\w.])FileImage\(", _ => { images = true; return "CrossWinFileImage("; });
+            if (images)
+            {
+                var m = Regex.Match(t, @"^import .*;\s*$", RegexOptions.Multiline);
+                const string imp = "import 'package:crosswin_io/flutter.dart';\n";
+                t = m.Success ? t.Insert(m.Index + m.Length + 1, imp) : imp + t;
+            }
+            if (t == text) continue;
+            File.WriteAllText(f, t);
+            File.SetLastWriteTimeUtc(f, mtime);
+        }
+    }
+
+    // ------------------------------------------------------------------ phone storage on the server
+
+    /// <summary>GET a device's storage, PUT a file or folder, DELETE a path: /crosswin/fs/&lt;device&gt;[?path=…].</summary>
+    public static bool TryServeStorage(System.Net.HttpListenerContext ctx, string storageRoot)
+    {
+        string path = ctx.Request.Url!.AbsolutePath;
+        const string prefix = "/crosswin/fs/";
+        if (!path.StartsWith(prefix)) return false;
+        string device = Regex.Replace(path[prefix.Length..], "[^A-Za-z0-9_-]", "");
+        if (device.Length == 0) { ctx.Response.StatusCode = 400; return true; }
+        string root = Path.Combine(storageRoot, device);
+        string? Local(string? p)
+        {
+            if (string.IsNullOrEmpty(p)) return null;
+            string full = Path.GetFullPath(Path.Combine(root, p.TrimStart('/')));
+            return full.StartsWith(Path.GetFullPath(root)) ? full : null;
+        }
+        string? target = Local(ctx.Request.QueryString["path"]);
+        switch (ctx.Request.HttpMethod)
+        {
+            case "GET":
+            {
+                var files = new Dictionary<string, object[]>();
+                var dirs = new List<string>();
+                if (Directory.Exists(root))
+                {
+                    foreach (string d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+                        dirs.Add("/" + Path.GetRelativePath(root, d).Replace('\\', '/'));
+                    foreach (string f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                        files["/" + Path.GetRelativePath(root, f).Replace('\\', '/')] = new object[]
+                        {
+                            new DateTimeOffset(File.GetLastWriteTimeUtc(f)).ToUnixTimeMilliseconds(),
+                            Convert.ToBase64String(File.ReadAllBytes(f)),
+                        };
+                }
+                byte[] json = JsonSerializer.SerializeToUtf8Bytes(new { dirs, files });
+                ctx.Response.ContentType = "application/json";
+                ctx.Response.Headers["Cache-Control"] = "no-store";
+                ctx.Response.OutputStream.Write(json);
+                return true;
+            }
+            case "PUT" when target != null:
+                if (ctx.Request.QueryString["dir"] == "1") Directory.CreateDirectory(target);
+                else
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    using var fs = File.Create(target);
+                    ctx.Request.InputStream.CopyTo(fs);
+                }
+                return true;
+            case "DELETE" when target != null:
+                if (File.Exists(target)) File.Delete(target);
+                else if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
+                return true;
+            default:
+                ctx.Response.StatusCode = 400;
+                return true;
+        }
+    }
+
     /// <summary>Points the shimmed packages at the patched copies and makes flutter_web_plugins importable.</summary>
     public static void PatchPubspec(string src, List<string> used)
     {
@@ -101,6 +222,8 @@ public static class PreviewFakes
         if (cut >= 0) text = text[..cut].TrimEnd() + "\n";
         if (!Regex.IsMatch(text, @"^\s+flutter_web_plugins:", RegexOptions.Multiline))
             text = Regex.Replace(text, @"^dependencies:[ \t]*\r?\n", "dependencies:\n  flutter_web_plugins:\n    sdk: flutter\n", RegexOptions.Multiline);
+        if (!Regex.IsMatch(text, @"^\s+crosswin_io:", RegexOptions.Multiline))
+            text = Regex.Replace(text, @"^dependencies:[ \t]*\r?\n", "dependencies:\n  crosswin_io:\n    path: .crosswin/packages/crosswin_io\n", RegexOptions.Multiline);
         var block = new System.Text.StringBuilder($"\n{Marker} (generated, preview work copy only)\n");
         bool hasOverrides = Regex.IsMatch(text, @"^dependency_overrides:", RegexOptions.Multiline);
         string entries = string.Concat(used.Select(u => $"  {u}:\n    path: .crosswin/packages/{u}\n"));
@@ -175,17 +298,22 @@ public static class PreviewFakes
         // Generated by CrossWin for the device preview. Not part of your project.
         // Answers device plugins' method channels with CrossWin's test data (served under /assets/crosswin/).
         import 'dart:convert';
+        import 'dart:ui' as ui;
 
         import 'package:flutter/foundation.dart';
         import 'package:flutter/services.dart';
         import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 
+        import 'package:crosswin_io/io.dart' as cw;
         """ + (used.Contains("permission_handler_platform_interface")
-            ? "import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';\n\n" : "") + """
+            ? "import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';\n" : "")
+            + (used.Contains("path_provider_platform_interface")
+            ? "import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';\n" : "") + """
         void installCrossWinFakes() {
         """ + (used.Contains("photo_manager") ? "  MethodChannel('com.fluttercandies/photo_manager', const StandardMethodCodec(), webPluginRegistrar).setMethodCallHandler(_photos);\n" : "")
             + (used.Contains("flutter_contacts") ? "  MethodChannel('flutter_contacts', const StandardMethodCodec(), webPluginRegistrar).setMethodCallHandler(_contacts);\n" : "")
             + (used.Contains("permission_handler_platform_interface") ? "  PermissionHandlerPlatform.instance = _CrossWinPermissions();\n" : "")
+            + (used.Contains("path_provider_platform_interface") ? "  PathProviderPlatform.instance = _CrossWinPaths();\n" : "")
             + """
         }
 
@@ -196,17 +324,60 @@ public static class PreviewFakes
 
         // ---------------------------------------------------------------- photo_manager
 
+        // The test photos plus what the app saved to the gallery (kept in the frame's phone storage).
+        const _savedDir = '/crosswin/gallery';
+        const _savedIndex = '$_savedDir/saved.json';
         List<Map<String, dynamic>>? _library;
+
+        List<Map<String, dynamic>> _saved() => cw.CrossWinFs.isFile(_savedIndex)
+            ? (jsonDecode(utf8.decode(cw.CrossWinFs.read(_savedIndex))) as List).cast<Map<String, dynamic>>()
+            : <Map<String, dynamic>>[];
+
         Future<List<Map<String, dynamic>>> _all() async {
+          if (_library != null) return _library!;
           final list = (jsonDecode(await rootBundle.loadString('crosswin/photos.json')) as List).cast<Map<String, dynamic>>();
+          list.addAll(_saved());
           list.sort((a, b) => (b['t'] as int).compareTo(a['t'] as int)); // newest first
-          return _library ??= list;
+          return _library = list;
+        }
+
+        Future<Uint8List?> _photoBytes(String id, {bool thumb = false}) async {
+          final saved = _library?.where((p) => p['id'] == id && p['file'] != null).firstOrNull;
+          if (saved != null) return saved['type'] == 2 ? null : cw.CrossWinFs.read(saved['file'] as String);
+          return _bytes('crosswin/${thumb ? 'thumb' : 'photo'}/$id.jpg');
+        }
+
+        /// Puts [bytes] into the gallery like the phone would, and returns the new asset.
+        Future<Map<String, dynamic>> _store(Uint8List bytes, String title, {bool video = false, int? createdMs}) async {
+          final all = await _all();
+          var w = 0, h = 0;
+          if (!video) {
+            try {
+              final frame = await (await ui.instantiateImageCodec(bytes)).getNextFrame();
+              w = frame.image.width;
+              h = frame.image.height;
+            } catch (_) {}
+          }
+          final id = 'saved_${DateTime.now().microsecondsSinceEpoch}';
+          final ext = title.contains('.') ? title.substring(title.lastIndexOf('.')) : (video ? '.mp4' : '.png');
+          final file = '$_savedDir/$id$ext';
+          cw.CrossWinFs.mkdir(_savedDir, recursive: true);
+          cw.CrossWinFs.write(file, bytes);
+          final entry = <String, dynamic>{
+            'id': id, 'title': title, 'w': w, 'h': h, 't': (createdMs ?? DateTime.now().millisecondsSinceEpoch) ~/ 1000,
+            'lat': null, 'lng': null, 'file': file, 'type': video ? 2 : 1,
+            'mime': video ? 'video/mp4' : (ext == '.jpg' || ext == '.jpeg' ? 'image/jpeg' : 'image/png'),
+          };
+          cw.CrossWinFs.write(_savedIndex, utf8.encode(jsonEncode([..._saved(), entry])));
+          all.insert(0, entry);
+          return _asset(entry);
         }
 
         Map<String, dynamic> _asset(Map<String, dynamic> p) => {
-              'id': p['id'], 'type': 1, 'width': p['w'], 'height': p['h'], 'duration': 0, 'orientation': 0,
+              'id': p['id'], 'type': p['type'] ?? 1, 'width': p['w'], 'height': p['h'], 'duration': 0, 'orientation': 0,
               'title': p['title'], 'subtype': 0, 'createDt': p['t'], 'modifiedDt': p['t'],
-              'relativePath': 'DCIM/CrossWin/', 'mimeType': 'image/jpeg', 'lat': p['lat'], 'lng': p['lng'],
+              'relativePath': p['file'] != null ? 'Pictures/' : 'DCIM/CrossWin/', 'mimeType': p['mime'] ?? 'image/jpeg',
+              'lat': p['lat'], 'lng': p['lng'],
             };
 
         Map<String, dynamic> _album(int count, int modified) => {
@@ -218,7 +389,8 @@ public static class PreviewFakes
         Future<Object?> _photos(MethodCall c) async {
           final a = _args(c);
           final all = await _all();
-          final images = _wantsImages(a['type']) ? all : const <Map<String, dynamic>>[];
+          final type = a['type'] as int?;
+          final images = all.where((p) => type == null || (((p['type'] as int? ?? 1) == 2 ? 2 : 1) & type) != 0).toList();
           Map<String, dynamic>? byId(Object? id) => all.where((p) => p['id'] == id).firstOrNull;
           switch (c.method) {
             case 'requestPermissionExtend':
@@ -246,9 +418,28 @@ public static class PreviewFakes
             case 'getThumb':
               final o = (a['option'] as Map?)?.cast<String, dynamic>() ?? const {};
               final big = ((o['width'] as int? ?? 0) > 640) || ((o['height'] as int? ?? 0) > 640);
-              return _bytes('crosswin/${big ? 'photo' : 'thumb'}/${a['id']}.jpg');
+              return _photoBytes(a['id'] as String, thumb: !big);
             case 'getOriginBytes':
-              return _bytes('crosswin/photo/${a['id']}.jpg');
+              return _photoBytes(a['id'] as String);
+            case 'saveImage':
+              return _store(a['image'] as Uint8List, (a['filename'] ?? a['title'] ?? 'image.png') as String,
+                  createdMs: a['creationDate'] as int?);
+            case 'saveImageWithPath':
+              return _store(cw.CrossWinFs.read(a['path'] as String), (a['title'] ?? 'image.png') as String);
+            case 'saveVideo':
+              return _store(cw.CrossWinFs.read(a['path'] as String), (a['title'] ?? 'video.mp4') as String, video: true);
+            case 'getFullFile':
+              // iOS-style reads go through a file: hand out a cached copy in the frame's storage.
+              final id = a['id'] as String;
+              final stored = byId(id)?['file'] as String?;
+              if (stored != null) return stored;
+              final path = '/crosswin/cache/photo_manager/$id.jpg';
+              if (!cw.CrossWinFs.isFile(path)) {
+                final b = await _photoBytes(id);
+                if (b == null) return null;
+                cw.CrossWinFs.writeVolatile(path, b);
+              }
+              return path;
             case 'getLatLngAndroidQ':
               final p = byId(a['id']);
               return {'lat': p?['lat'], 'lng': p?['lng']};
@@ -257,9 +448,9 @@ public static class PreviewFakes
             case 'getTitleAsync':
               return byId(a['id'])?['title'] ?? '';
             case 'getMimeTypeAsync':
-              return 'image/jpeg';
+              return byId(a['id'])?['mime'] ?? 'image/jpeg';
             case 'getFileSize':
-              return (await _bytes('crosswin/photo/${a['id']}.jpg')).length;
+              return (await _photoBytes(a['id'] as String))?.length ?? 0;
             case 'isLocallyAvailable':
               return true;
             default:
@@ -267,7 +458,8 @@ public static class PreviewFakes
           }
         }
 
-        """ + (used.Contains("permission_handler_platform_interface") ? PermissionsFake : "") + """
+        """ + (used.Contains("permission_handler_platform_interface") ? PermissionsFake : "")
+            + (used.Contains("path_provider_platform_interface") ? PathsFake : "") + """
 
         // ---------------------------------------------------------------- flutter_contacts
 
@@ -286,6 +478,40 @@ public static class PreviewFakes
               return null;
           }
         }
+        """;
+
+    // App folders inside the preview's phone storage (crosswin_io), like an app sandbox on a phone.
+    private const string PathsFake = """
+
+        // ---------------------------------------------------------------- path_provider
+
+        class _CrossWinPaths extends PathProviderPlatform {
+          String _dir(String name) {
+            final path = '${cw.CrossWinFs.root}/$name';
+            cw.CrossWinDirectory(path).createSync(recursive: true);
+            return path;
+          }
+
+          @override
+          Future<String?> getTemporaryPath() async => _dir('tmp');
+          @override
+          Future<String?> getApplicationSupportPath() async => _dir('support');
+          @override
+          Future<String?> getLibraryPath() async => _dir('library');
+          @override
+          Future<String?> getApplicationDocumentsPath() async => _dir('documents');
+          @override
+          Future<String?> getApplicationCachePath() async => _dir('cache');
+          @override
+          Future<String?> getExternalStoragePath() async => _dir('external');
+          @override
+          Future<List<String>?> getExternalCachePaths() async => [_dir('external-cache')];
+          @override
+          Future<List<String>?> getExternalStoragePaths({StorageDirectory? type}) async => [_dir('external')];
+          @override
+          Future<String?> getDownloadsPath() async => _dir('downloads');
+        }
+
         """;
 
     // The browser's permission_handler throws for photos, contacts and notifications: every permission is granted.
