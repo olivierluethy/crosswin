@@ -76,6 +76,23 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   from Wine DirectWrite = macOS + Wine fonts only; even a `file:///C:/windows/Fonts/#Family` URI failed). After
   registering it under `HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts` WPF lists and renders it
   (verified with MIT Fluent System Icons). CrossWin now installs+registers every font in `~/.crosswin/fonts` on `run`.
+- **E10 font resolution under Wine** (2026-11-03, FontProbe app + PassMasterSuite, macOS and Linux container):
+  - Unknown family names ("Segoe UI", "SF Pro Text") render even ASCII "-" as a box on macOS; superscripts ⁴–⁹ are
+    boxes in Tahoma/Arial; there is no per-character fallback.
+  - `HKLM\...\FontSubstitutes` has no effect on WPF. `HKCU\Software\Wine\Fonts\Replacements` does: the replaced
+    family appears in `Fonts.SystemFontFamilies`, and because WPF's fallback chain starts with "Segoe UI"/"Segoe UI
+    Symbol", mapping those two also fixes missing glyphs in other fonts (verified: - ⁶ → ✓✔✕✗ ★☆ ▲▼ ½ ≤≥ äöü, regular
+    and semibold).
+  - **Linux crash:** WPF resolves an unknown family by falling back to "Arial" and calls `Environment.FailFast` if Arial
+    is missing ("Unrecoverable system error", `FontFamily.get_FirstFontFamily`, also `TypefaceMap.MapUnresolved
+    Characters`). The Ubuntu container has no Arial; PassMasterSuite died on opening the Cracker view ("Consolas").
+  - CrossWin now maps Arial/Times New Roman/Courier New/Consolas/Segoe UI(+Light/Semibold/Symbol) to host fonts when the
+    host lacks them (macOS: Helvetica Neue, Arial Unicode MS, Menlo; Linux: Liberation/DejaVu/Noto, detected via
+    fc-list or font files). Result: no crash on Linux; all PassMasterSuite views render on both hosts.
+- **E11 X11 capture staleness**: in the Linux container the agent's window-DC capture of PassMasterSuite still showed
+  Home while the X server (xwd root) showed Checker. `snap` on Linux now crops the window from an xwd root capture when
+  xwd + ImageMagick exist (method `x11-screen`), else warns. Synthetic clicks under Xvfb navigated in one run and not in
+  the next (a tooltip popup was open over the start cursor position) — unresolved.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms

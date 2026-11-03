@@ -87,16 +87,24 @@ internal static unsafe class Snap
         public uint biClrUsed, biClrImportant;
     }
 
-    /// <summary>First visible top-level window and the screen position of its client origin.</summary>
+    /// <summary>
+    /// The window input coordinates refer to: the largest titled top-level window (untitled ones are popups,
+    /// tooltips or helper windows), and the screen position of its client origin.
+    /// </summary>
     public static (IntPtr Handle, int Left, int Top) MainWindow()
     {
-        foreach (var (h, _) in VisibleWindows())
+        IntPtr best = IntPtr.Zero;
+        long bestArea = -1;
+        foreach (var (h, title) in VisibleWindows())
         {
-            var origin = new POINT();
-            ClientToScreen(h, ref origin);
-            return (h, origin.X, origin.Y);
+            GetClientRect(h, out var r);
+            long area = (long)r.Right * r.Bottom + (title.Length > 0 ? 1L << 40 : 0);
+            if (area > bestArea) { best = h; bestArea = area; }
         }
-        return (IntPtr.Zero, 0, 0);
+        if (best == IntPtr.Zero) return (IntPtr.Zero, 0, 0);
+        var origin = new POINT();
+        ClientToScreen(best, ref origin);
+        return (best, origin.X, origin.Y);
     }
 
     private static List<(IntPtr, string)> VisibleWindows()
@@ -130,7 +138,10 @@ internal static unsafe class Snap
             string safe = string.Concat(title.Split(Path.GetInvalidFileNameChars()));
             string path = Path.Combine(dir, $"snap-{n++}-{safe}.png");
             File.WriteAllBytes(path, Png.Encode(bgra, w, ht));
-            report.AppendLine($"{path}\t{w}x{ht}\t{title}\t{method}");
+            var origin = new POINT();
+            ClientToScreen(h, ref origin);
+            // Screen origin lets the host re-capture the same area (needed on X11, see Commands.RecaptureX11).
+            report.AppendLine($"{path}\t{w}x{ht}\t{title}\t{method}\t{origin.X},{origin.Y}");
         }
         return report.ToString();
     }
@@ -243,9 +254,12 @@ internal static class Input
 
     public static string Run(string script)
     {
+        Trace("input: find window");
         var (hwnd, left, top) = Snap.MainWindow();
+        Trace($"input: window {hwnd} at {left},{top}");
         if (hwnd == IntPtr.Zero) return "ERROR no visible window";
         SetForegroundWindow(hwnd);
+        Trace("input: foreground set");
         Thread.Sleep(150);
         var log = new StringBuilder();
         foreach (string raw in script.Split('\n'))
@@ -255,9 +269,12 @@ internal static class Input
             {
                 string[] p = line.Split(' ');
                 int x = left + int.Parse(p[1]), y = top + int.Parse(p[2]);
+                Trace($"click: SetCursorPos {x},{y}");
                 SetCursorPos(x, y);
+                Trace("click: cursor set");
                 Thread.Sleep(50);
                 Send(Mouse(MOUSEEVENTF_LEFTDOWN), Mouse(MOUSEEVENTF_LEFTUP));
+                Trace("click: sent");
             }
             else if (line.StartsWith("wait "))
             {
@@ -275,6 +292,14 @@ internal static class Input
             log.AppendLine("ok: " + line);
         }
         return log.ToString();
+    }
+
+    // Opt-in diagnostics (CROSSWIN_AGENT_TRACE=1): step log in <session>/trace.log to locate hangs.
+    internal static void Trace(string msg)
+    {
+        if (Environment.GetEnvironmentVariable("CROSSWIN_AGENT_TRACE") != "1") return;
+        string? dir = Environment.GetEnvironmentVariable("CROSSWIN_AGENT_DIR");
+        if (dir != null) File.AppendAllText(Path.Combine(dir, "trace.log"), $"{DateTime.Now:HH:mm:ss.fff} {msg}\n");
     }
 
     private static INPUT Mouse(uint flags) => new() { type = 0, u = new UNION { mi = new MOUSEINPUT { dwFlags = flags } } };
