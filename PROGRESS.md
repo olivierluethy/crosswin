@@ -89,3 +89,10 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - 2026-11-03: Fresh-home check (`CROSSWIN_HOME=<empty dir> ./crosswin setup`): SDK 10 + Wine download/verify + prefix + agent in 2:31 min; HelloWpf run + 2 clicks + snap correct.
 - 2026-11-02: Initial mission, autonomous workflow and handoff checklist established. Compared SwissHacks monorepo agent guidance; added Superpowers routing and debugging escalation.
 - 2026-11-03: Rosetta 2 installed (user approved). Private .NET 8 + 10 SDKs, Wine 11.21, prefix. Samples, agent, CLI (`doctor/setup/inspect/run/snap/input`) implemented and verified end to end on macOS arm64.
+
+## Agent reconstruction and reference-comparison compatibility — #6
+- [ ] Research actual Reverse Engineer Anything (REA/RAE) repository and supported output/agent interfaces; do not invent an integration API. Keep CrossWin independent of the reconstruction tool.
+- [ ] Define an optional reference-comparison contract: authorized reference screenshots/traces and implementation session, with explicit platform/viewport/state metadata.
+- [ ] Expose compact UI-tree/layout/navigation/behavioral diffs and reproducible interaction steps to external agents through the existing agent session API, rather than requiring manual screenshot comparisons.
+- [ ] Demonstrate an authorized sample app reconstruction feedback loop: change → CrossWin run → compare reference vs implementation → structured mismatch → verify correction; benchmark iteration time.
+- [ ] Document boundaries: no DRM bypass, credential extraction, unauthorized proprietary assets or assumption of access to closed-source internals.
