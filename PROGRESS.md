@@ -102,3 +102,8 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - [ ] Validate the riskiest assumption with a bounded spike; document actual device/tool availability and fallback rather than guessing.
 - [ ] Implement the smallest complete path, verify actual execution and regression safety, measure latency/resources when relevant, and commit.
 - [ ] Keep issue links, observed evidence, current blocker and the exact next runnable command in the handoff. Preserve previously checked items.
+
+## Non-developer acceptance gate — #4, #6
+- [ ] Validate that a first-time non-developer can launch CrossWin, open a supported sample project and reach a working preview using only guided GUI actions; record blockers and time-to-first-preview.
+- [ ] Ensure no Claude Code, agent account, terminal command or developer jargon is required for the core supported user journey.
+- [ ] Provide clear plain-language instructions for unavoidable permissions and unsupported platforms, with advanced controls progressively disclosed.
