@@ -103,6 +103,23 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   - Same sources retargeted to net8.0-windows (shadow project) render correctly under CrossWin (bracket, combo boxes,
     "Simulieren"). ComboBox drop-downs (AllowsTransparency popup) are not captured by the agent; one run showed two
     slots filled after a single click, a controlled rerun showed only focus — unresolved.
+- **E13 .NET Framework in `crosswin run`** (2026-11-03):
+  - `NetFramework.ShadowLegacyProjects` rewrites every non-SDK `.csproj` in the work copy in place (ProjectReferences
+    keep resolving): TargetFrameworkVersion → TFM, Compile/Page/ApplicationDefinition/Resource/EmbeddedResource/None/
+    Content items with metadata, framework and HintPath references, packages.config → PackageReference (packages\
+    HintPaths dropped), Debug DefineConstants, Prefer32Bit/PlatformTarget; COMReference and custom imports → warnings.
+    Reference assemblies come from the SDK's implicit Microsoft.NETFramework.ReferenceAssemblies.
+  - Wine Mono: Gcenx macOS build bundles 11.3.0 in `share/wine/mono`. Ubuntu Wine 9.0 does not; `setup` reads the
+    required version from appwiz.cpl (ASCII in Gcenx builds, **UTF-16 only** in Ubuntu's) → 8.1.0, downloads the MSI
+    from dl.winehq.org and installs it with `msiexec /qn`.
+  - 32-bit: Ubuntu container without wine32 failed with `failed to load C:\windows\syswow64\ntdll.dll` for a
+    Prefer32Bit app. CrossWin detects 32-bit support (i386-windows/ntdll.dll) and builds AnyCPU+Prefer32Bit apps with
+    `-p:Prefer32Bit=false` when missing (warning); explicit x86 apps get an install hint.
+  - Evidence Linux (Ubuntu 24.04, Wine 9.0, Wine Mono 8.1.0): samples/LegacyWinForms renders ("Runtime:
+    4.0.30319.42000 (64-bit)"), xdotool typing + click → Newtonsoft.Json from packages.config serialises
+    `{"clicks":1,"note":"hallo Linux"}`; TourneyMaster (net472 WPF) renders its full UI. macOS: both build and run
+    (process alive, no err lines) — not visually verified (no capture path for Mono apps).
+  - Wine Mono WinExe processes print nothing to the terminal, so readiness markers via Console do not work there.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms

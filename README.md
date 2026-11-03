@@ -4,7 +4,7 @@
 
 CrossWin is an early-stage open-source compatibility and developer-workflow project. Its mission is to make it possible to clone an existing C# WPF or WinForms repository, run the *real* app, interact with its interface, inspect changes and iterate quickly on macOS or Linux.
 
-> **Current status (2026-11-03):** Early but working. Modern .NET (6+) WinForms and WPF apps build on macOS and run interactively under Wine. Verified on an Apple Silicon Mac with small sample apps only — your app may hit Wine gaps. .NET Framework 4.x apps are not supported yet. Linux x86_64 is verified in a container (Ubuntu 24.04, Wine 9.0), not yet on physical hardware.
+> **Current status (2026-11-03):** Early but working. Modern .NET (6+) WinForms and WPF apps build on macOS and run interactively under Wine. Verified on an Apple Silicon Mac with small sample apps only — your app may hit Wine gaps. .NET Framework 4.x apps (including old Visual Studio project files) are supported experimentally via Wine Mono. Linux x86_64 is verified in a container (Ubuntu 24.04, Wine 9.0), not yet on physical hardware.
 
 ## Quick start (macOS, Apple Silicon or Intel)
 
@@ -28,11 +28,13 @@ Other commands:
 | `./crosswin snap` | Screenshot the running app |
 | `./crosswin input "click 76 88" "wait 700" "type hello" "key Enter"` | Real mouse/keyboard input; X/Y are pixels in the `snap` image; `key` sends Enter, Tab, Escape, arrows, … |
 
+**.NET Framework 4.x apps** (old-style `.csproj`, `packages.config`) work through the same `./crosswin run`. In the isolated copy CrossWin translates each old project file into an equivalent SDK-style one (same files, references, resources, NuGet packages), builds the real `net4x` `.exe` with the .NET SDK and runs it on [Wine Mono](https://gitlab.winehq.org/mono/wine-mono), Wine's open-source .NET Framework. Limits: Wine Mono's WPF is incomplete, `snap`/`input` are not available for these apps, COM references and custom MSBuild imports are skipped (with a warning). If Wine has no 32-bit support, apps that merely *prefer* 32-bit run as 64-bit; `x86`-only apps need `wine32`.
+
 How it works: CrossWin copies your repo to `~/.crosswin/work/…` (your files are never modified), builds a self-contained `win-x64` publish with the .NET SDK on macOS/Linux, and runs the real `.exe` under Wine. WPF uses software rendering by default (`--gpu` to try hardware rendering, unverified). First start of an app takes ~10–15 s.
 
 Missing Windows fonts (e.g. the icon font `Segoe MDL2 Assets`): copy the `.ttf` from a Windows installation you are licensed for (`C:\Windows\Fonts\segmdl2.ttf`) into `~/.crosswin/fonts/`; `run` installs and registers it in the Wine prefix. CrossWin does not ship Microsoft fonts.
 
-Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; WebView2/WebBrowser, COM components, Direct3D interop and native third-party DLLs are flagged by `inspect` and likely to fail; .NET Framework 4.x is reported as unsupported. See [ARCHITECTURE.md](ARCHITECTURE.md) for evidence.
+Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; WebView2/WebBrowser, COM components, Direct3D interop and native third-party DLLs are flagged by `inspect` and likely to fail; .NET Framework apps run on Wine Mono, not Microsoft's .NET Framework. See [ARCHITECTURE.md](ARCHITECTURE.md) for evidence.
 
 ## Start development with Claude Code
 
