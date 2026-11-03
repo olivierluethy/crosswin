@@ -17,7 +17,8 @@ This is the single source of truth for ongoing work. Update it during implementa
 - [ ] Linux on physical older x86_64 hardware / real desktop session (X11 and Wayland/XWayland).
 - [x] One-command setup/launch workflow: `./crosswin setup`, `./crosswin run <repo>`; private .NET SDK, no sudo, no Windows/Visual Studio.
 - [ ] .NET Framework (net4x / legacy csproj) apps: currently reported as Unsupported; investigate Wine Mono vs. MS .NET Framework redistributable + build path.
-- [ ] Deliver a runnable user-testing milestone, clear instructions and known limitations. (README updated; awaiting user test)
+- [x] Deliver a runnable user-testing milestone, clear instructions and known limitations (README quick start; fresh-home setup verified).
+- [ ] User acceptance test of the milestone on their own apps.
 - [ ] After user feedback, fix observed defects and add narrowly targeted regression tests.
 
 ## Current handoff
@@ -46,5 +47,6 @@ This is the single source of truth for ongoing work. Update it during implementa
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log
+- 2026-11-03: Fresh-home check (`CROSSWIN_HOME=<empty dir> ./crosswin setup`): SDK 10 + Wine download/verify + prefix + agent in 2:31 min; HelloWpf run + 2 clicks + snap correct.
 - 2026-11-02: Initial mission, autonomous workflow and handoff checklist established. Compared SwissHacks monorepo agent guidance; added Superpowers routing and debugging escalation.
 - 2026-11-03: Rosetta 2 installed (user approved). Private .NET 8 + 10 SDKs, Wine 11.21, prefix. Samples, agent, CLI (`doctor/setup/inspect/run/snap/input`) implemented and verified end to end on macOS arm64.
