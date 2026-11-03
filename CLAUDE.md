@@ -42,3 +42,6 @@ A documented command that takes an existing sample repository, identifies suppor
 
 ## Reusable project bootstrap
 - Keep the agent workflow generic where possible: a mission, one live checklist, concise architecture notes, skill routing and evidence-based debugging. For a different project, adapt mission, acceptance criteria, runtime/test tools and technical constraints rather than blindly copying CrossWin-specific instructions.
+
+## Continued work and linked roadmap
+On **Start** or **Continue**, inspect git status, PROGRESS.md, ARCHITECTURE.md and issues #2–#6. Issue #6 is the overarching vision; #2–#5 specify features. Preserve all completed WPF/WinForms implementation and checks; do not restart or rebuild the project from scratch. Continue the next feasible unchecked task, using evidence-based verification. Prioritize agent-native web diagnostics, fast authorized Android physical-device testing and existing runtime reliability according to dependencies. Use structured logs, UI/accessibility trees and interaction traces before costly screenshot loops, but retain visual verification for visual bugs. Do not bypass device trust prompts or claim iOS execution or store publishing without verified support.
