@@ -113,3 +113,9 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - [ ] Profile actual slow stages, inventory third-party tools and tune their supported configurations before considering alternatives or forks.
 - [ ] Run controlled A/B comparisons for faster interaction/inspection paths on representative web/Flutter/Android targets; verify total loop speed, not isolated command speed.
 - [ ] Apply one reversible optimization at a time; retain only measured gains that pass regression, novice usability, security and maintainability checks. Record before/after and rollback path.
+
+## Agent-neutral MCP interoperability — #2, #4, #6
+- [ ] Define a small optional MCP **server** adapter over the standalone CrossWin engine; document actual host compatibility, including verifying Grok Bot rather than assuming support.
+- [ ] Demonstrate one complete agent loop: discover → start/attach session → inspect UI → batch actions → assert state → retrieve diagnostics; same session optionally visible in GUI.
+- [ ] Benchmark action-to-observation latency and setup friction against direct API, avoiding unsupported claims that MCP itself accelerates execution.
+- [ ] Preserve fully functional GUI-only operation; document permissions, session isolation, sensitive logs and alternative local API for hosts without MCP.
