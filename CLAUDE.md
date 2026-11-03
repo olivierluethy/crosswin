@@ -1,7 +1,10 @@
 # CrossWin — autonomous agent instructions
 
 ## Trigger
-When the user says **Start** (case-insensitive), immediately read this file, PROGRESS.md, ARCHITECTURE.md and .claude/skills/crosswin-development/SKILL.md. Resume the first unchecked actionable item in PROGRESS.md. Do not request another prompt, propose a planning session, or stop after writing documentation. Implement working code.
+When the user says **Start** or **Continue** (case-insensitive), immediately read this file, PROGRESS.md, ARCHITECTURE.md and .claude/skills/crosswin-development/SKILL.md. Inspect git status and existing progress, then resume the next prioritized actionable unchecked item in PROGRESS.md, using issue #6 as the product north star and #2–#5 as referenced requirements. Do not reset completed work. Do not request another prompt, propose a planning session, or stop after writing documentation. Implement working code.
+
+## Current product direction and existing implementation
+CrossWin already has verified WPF/WinForms functionality. Preserve it. Issue #6 coordinates the expanded agent-native web, mobile, desktop and real-device vision; #2–#5 contain detailed implementation requirements. Do not interpret this as permission to restart or replace the existing architecture. Prioritize small end-to-end verified slices, including a fast physical Android device bridge and web inspection, subject to host/device availability. Use a shared, bounded, privacy-aware diagnostics/session interface; favor native UI hierarchy, logs, accessibility and batched interactions over repetitive screenshots, while retaining visual verification where necessary. A real device requires user authorization; iOS signing/platform restrictions and app-store publication are separate concerns.
 
 ## Non-negotiable mission
 Enable users to clone existing C# WPF and WinForms projects and actually build, run, interact with and visually inspect the real application on macOS and Linux, without requiring Windows or a migration to another UI framework. Preserve original application semantics and source. Target Intel and Apple Silicon Macs (including 2020-era machines) and modest x86_64 Linux hardware. Compatibility is a measurable goal, never a guarantee. Windows support is optional and later.
@@ -16,7 +19,7 @@ Enable users to clone existing C# WPF and WinForms projects and actually build, 
 - Make small, meaningful commits. Continue through the checklist until a real blocker, user stop, or resource/time limit.
 - Do not start long-running background work without explicit permission. Never claim unattended continuation after Claude Code exits or runs out of tokens.
 - User prefers to test complete runnable milestones. Avoid building a broad test suite before a first working vertical slice; permit essential build checks, smoke checks and focused experiments needed to avoid developing against false assumptions. Never claim success without verification.
-- If interrupted, on next Start inspect git status, PROGRESS.md and recent commits, reconcile them, then resume without duplicating work.
+- If interrupted, on next Start or Continue inspect git status, PROGRESS.md and recent commits, reconcile them, then resume without duplicating work.
 - Keep install/run instructions accurate and concise. Avoid dependencies on Visual Studio or Windows for the core macOS/Linux path.
 - Never silently alter or delete users' application source. Use isolated build/runtime environments where feasible.
 
