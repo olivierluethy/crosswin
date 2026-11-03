@@ -93,6 +93,16 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   Home while the X server (xwd root) showed Checker. `snap` on Linux now crops the window from an xwd root capture when
   xwd + ImageMagick exist (method `x11-screen`), else warns. Synthetic clicks under Xvfb navigated in one run and not in
   the next (a tooltip popup was open over the start cursor position) — unresolved.
+- **E12 .NET Framework app** (olivierluethy/TourneyMaster @ 52e4002, MIT; legacy csproj, net472 WPF, 2026-11-03):
+  - Build on macOS works with a *shadow* SDK-style project in an isolated copy (same Compile/Page/Resource items,
+    `TargetFramework=net472`, `UseWPF`, `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3) → real net472
+    `Turnierspielplan.exe`.
+  - Runtime: the Gcenx Wine build ships **Wine Mono 11.3.0** (`share/wine/mono`); the exe starts under it (process
+    alive, only fixme lines, no err). **Not visually verified**: startup hooks do not exist in Mono, cross-process
+    window-DC BitBlt returns FALSE, and host `screencapture` lacks Screen Recording permission.
+  - Same sources retargeted to net8.0-windows (shadow project) render correctly under CrossWin (bracket, combo boxes,
+    "Simulieren"). ComboBox drop-downs (AllowsTransparency popup) are not captured by the agent; one run showed two
+    slots filled after a single click, a controlled rerun showed only focus — unresolved.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
