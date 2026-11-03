@@ -40,6 +40,17 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 
 **Next Start or Continue:** inspect git status and prior evidence, choose the next actionable unchecked vertical slice and implement it. Keep existing WPF/WinForms acceptance items active. If no authorized real Android device is attached, verify discovery/error handling and document the pending physical acceptance test rather than claiming success. After each meaningful change record the linked issue, commands, evidence, commit and exact next action.
 
+
+## Product UX, design system and demo — linked to #4, #5, #6
+- [ ] Audit current UI and distinguish shipped Web/Flutter/Android features from plans; preserve functioning backends. Document first-run journey and performance baseline. (#4, #6)
+- [ ] Define an **original CrossWin style guide** (type scale, spacing, colors, icons, states, accessibility) inspired by frictionless products without copying Grok Bot branding. Use Superpowers brainstorming/frontend-design skills. (#4, #5, #6)
+- [ ] Implement a guided next-action flow: open project, auto-detect, sensible single default device, run, preview, debug, optionally connect physical device; no unnecessary decisions. (#4, #5)
+- [ ] Share UI components/design tokens between web and native desktop shell where practical; headless sessions remain usable and attaching a preview must not restart a session. (#5, #6)
+- [ ] Support optional side-by-side device previews, quick target switch, rotation, and isolated simultaneous sessions with truthful capability labels and resource limits. (#2, #5)
+- [ ] Measure first-preview latency, reload, diagnostic-event latency, CPU/RAM and compare native diagnostics with Playwright/CDP; only replace tools where benchmarked improvement is real. (#2, #6)
+- [ ] Publish a GitHub Pages landing/documentation/demo site using the same style guide; clearly distinguish interactive frontend demos from actual emulator execution, which needs a runtime/backend. (#4, #6)
+- [ ] Verify one actual Flutter app end-to-end with available hardware: agent start, structured failure, verified fix, human-visible preview and optional real-device run. Do not mark complete without evidence. (#2, #5, #6)
+
 ## Current handoff
 **Status:** User-testable milestone. On macOS (Apple Silicon verified) and Linux x86_64 (container verified) `./crosswin run <repo>` builds unmodified modern-.NET WinForms/WPF apps and runs them interactively under Wine; Microsoft's CalculatorDemo and WPFGallery (.NET 10) work. `snap`/`input` give visual inspection and real input.
 
