@@ -80,3 +80,11 @@ CrossWin is a **standalone product for everyone**, explicitly including non-deve
 - Advanced developer controls may be progressively disclosed, but must not dominate the beginner experience. Validate onboarding with a novice usability scenario and measure time to first successful preview.
 - Do not claim that *any* arbitrary application runs without prerequisites: identify unsupported projects/devices and guide users through unavoidable OS permissions or platform SDK constraints.
 - Evaluate design, architecture, roadmap and acceptance decisions against this audience requirement before marking features complete.
+
+## Continuous optimization after a working baseline
+A passing end-to-end demo is the **start of measured optimization**, not the end of the task. Once the supported user journey works reliably, autonomously profile and improve the critical path (project detection → environment readiness → launch/preview → interaction → diagnostic feedback → fix verification), without sacrificing correctness or novice usability.
+- Establish reproducible baselines with multiple runs and record median/p95 latency, CPU/memory, reliability/flakiness and time-to-verified-fix; identify the largest bottleneck from actual traces rather than intuition.
+- Inventory current dependencies/tools (emulators, Playwright/CDP, ADB/UIAutomator, capture, process orchestration). Research supported faster paths and configure or tune existing tools before building replacements. Evaluate alternatives through controlled A/B benchmarks on representative projects/devices; prefer lower total workflow time over a fast microbenchmark.
+- Optimize in bounded increments: profile → hypothesis → smallest change → repeated benchmark → regression/UX/security check → retain or revert. Document evidence and tradeoffs, including cold vs warm start and physical vs virtual devices.
+- Avoid unbounded autonomous refactoring, bespoke forks or replacing mature tools solely for speed claims. Respect licenses and upstream maintenance. Never modify external dependencies or introduce brittle patches without a measured benefit and maintainability review.
+- Keep user-visible simplicity, clear progress and cancellation, and truthful reliability claims. Never trade stability, safety or accessibility for headline speed. Stop when improvements are marginal or higher-priority work is blocked.
