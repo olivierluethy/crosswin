@@ -39,6 +39,15 @@ public static class Commands
         string? wine = env.Wine;
         Line(wine != null, "wine", wine != null ? $"{env.WineVersion} at {wine}" : "missing: run  ./crosswin setup");
         Line(env.PrefixReady, "prefix", env.PrefixReady ? env.Prefix : $"not initialised ({env.Prefix}): run  ./crosswin setup");
+        if (wine != null)
+        {
+            Line(null, "wine 32-bit", env.Wine32Available ? "available"
+                : "not available (32-bit .NET Framework apps run as 64-bit where possible; Debian/Ubuntu: apt install wine32:i386)");
+            string? mono = NetFramework.FindMono(env);
+            Line(mono != null ? true : null, "wine mono", mono != null
+                ? $"{mono} (for .NET Framework apps)"
+                : "not installed; only needed for .NET Framework apps: run  ./crosswin setup");
+        }
         if (env.WineFontsPresent == false)
             Line(false, "fonts", "Wine's core fonts (tahoma.ttf) not found; WinForms apps may crash with \"Font cannot be found\". Debian/Ubuntu: sudo apt install fonts-wine fonts-liberation");
         Line(File.Exists(env.AgentDll), "agent", File.Exists(env.AgentDll) ? env.AgentDll : "not built: run  ./crosswin setup");
@@ -72,6 +81,12 @@ public static class Commands
         }
         SetWpfRendering(env, gpu: false);
         EnsureFontReplacements(env);
+        if (NetFramework.FindMono(env) == null)
+        {
+            // Only .NET Framework apps need Wine Mono; a failure here must not block modern .NET apps.
+            try { NetFramework.InstallMono(env); }
+            catch (CrossWinException ex) { Console.WriteLine("Warning: Wine Mono not installed (.NET Framework apps will not run): " + ex.Message); }
+        }
 
         Console.WriteLine("Building CrossWin agent (in-process screenshot/input helper)...");
         var build = Proc.Run(env.Dotnet, new[] { "build", Path.Combine(repo, "tools", "CrossWin.Agent"), "-c", "Release", "-nologo",
@@ -297,15 +312,42 @@ public static class Commands
         string src = Path.Combine(work, "src");
         string output = Path.Combine(work, "out");
         string rid = info.Platform.Equals("x86", StringComparison.OrdinalIgnoreCase) ? "win-x86" : "win-x64";
+        bool netFramework = info.IsNetFramework || !info.SdkStyle;
+
+        if (netFramework && NetFramework.FindMono(env) == null)
+            throw new CrossWinException("This is a .NET Framework app and Wine Mono is not installed. Run  ./crosswin setup  first.");
 
         if (!noBuild)
         {
             Console.WriteLine($"==> Copying sources to isolated work dir {src}");
             Mirror(sourceRoot, src);
             string projectCopy = Path.Combine(src, Path.GetRelativePath(sourceRoot, info.Path));
-            Console.WriteLine($"==> Building {rid} self-contained ({info.ChosenTfm}) — log: {Path.Combine(work, "build.log")}");
-            if (!Build(env, projectCopy, info.ChosenTfm!, rid, output, Path.Combine(work, "build.log")))
-                return 3;
+            string log = Path.Combine(work, "build.log");
+            if (netFramework)
+            {
+                foreach (string w in NetFramework.ShadowLegacyProjects(src)) Console.WriteLine("    warning: " + w);
+                string tfm = NetFramework.ToTfm(info.ChosenTfm ?? "v4.7.2");
+                var command = new List<string> { "build", projectCopy, "-c", "Debug", "-f", tfm };
+                bool wants32 = info.Platform.Equals("x86", StringComparison.OrdinalIgnoreCase) || info.Prefer32Bit;
+                if (wants32 && !env.Wine32Available)
+                {
+                    if (info.Platform.Equals("x86", StringComparison.OrdinalIgnoreCase))
+                        throw new CrossWinException("This app targets x86 (32-bit) but this Wine has no 32-bit support. Install it (Debian/Ubuntu: sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine32:i386) and rerun.");
+                    // AnyCPU + Prefer32Bit: pure managed code behaves the same as a 64-bit process.
+                    command.Add("-p:Prefer32Bit=false");
+                    Console.WriteLine("    warning: app prefers 32-bit but this Wine has no 32-bit support; running it as 64-bit (AnyCPU). Native 32-bit DLLs would fail; install wine32 to keep 32-bit.");
+                }
+                Console.WriteLine($"==> Building .NET Framework app ({tfm}) with the .NET SDK — log: {log}");
+                if (!Build(env, command.ToArray(), output, log))
+                    return 3;
+            }
+            else
+            {
+                Console.WriteLine($"==> Building {rid} self-contained ({info.ChosenTfm}) — log: {log}");
+                if (!Build(env, new[] { "publish", projectCopy, "-c", "Debug", "-f", info.ChosenTfm!, "-r", rid, "--self-contained", "true",
+                        "-p:PublishSingleFile=false", "-p:PublishTrimmed=false" }, output, log))
+                    return 3;
+            }
         }
 
         string? exe = FindExe(output, info);
@@ -402,14 +444,13 @@ public static class Commands
         }
     }
 
-    private static bool Build(HostEnv env, string project, string tfm, string rid, string output, string logPath)
+    private static bool Build(HostEnv env, string[] command, string output, string logPath)
     {
         using var log = new StreamWriter(logPath);
         var errors = new List<string>();
         int warnings = 0;
         var buildEnv = new Dictionary<string, string> { ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1", ["DOTNET_NOLOGO"] = "1" };
-        int code = Proc.Stream(env.Dotnet, new[] { "publish", project, "-c", "Debug", "-f", tfm, "-r", rid, "--self-contained", "true",
-            "-p:EnableWindowsTargeting=true", "-p:PublishSingleFile=false", "-p:PublishTrimmed=false", "-o", output, "-nologo" }, line =>
+        int code = Proc.Stream(env.Dotnet, command.Concat(new[] { "-p:EnableWindowsTargeting=true", "-o", output, "-nologo" }), line =>
         {
             log.WriteLine(line);
             if (line.Contains(": error ")) { if (!errors.Contains(line.Trim())) errors.Add(line.Trim()); }
@@ -425,8 +466,8 @@ public static class Commands
         foreach (string e in errors.Take(15)) Console.Error.WriteLine("  " + e);
         if (errors.Any(e => e.Contains("NETSDK1045")))
             Console.Error.WriteLine("Hint: the project needs a newer .NET SDK than CrossWin installed; rerun ./crosswin after updating (see README).");
-        if (errors.Any(e => e.Contains("MSB4019") || e.Contains("Microsoft.WinFX.targets")))
-            Console.Error.WriteLine("Hint: legacy .NET Framework project files cannot be built by the .NET SDK on macOS/Linux yet.");
+        if (errors.Any(e => e.Contains("MSB4019")))
+            Console.Error.WriteLine("Hint: the project imports MSBuild targets that only exist on Windows (Visual Studio); see the warnings above.");
         return false;
     }
 
@@ -440,7 +481,9 @@ public static class Commands
             string exe = cfg[..^".runtimeconfig.json".Length] + ".exe";
             if (File.Exists(exe)) return exe;
         }
-        return null;
+        // .NET Framework apps have no runtimeconfig; use the project's assembly name.
+        string byName = Path.Combine(output, info.AssemblyName + ".exe");
+        return File.Exists(byName) ? byName : null;
     }
 
     private static int Launch(HostEnv env, ProjectInfo info, string exe, List<string> appArgs, int? snapAfter, bool gpu)
