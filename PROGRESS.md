@@ -96,3 +96,9 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - [ ] Expose compact UI-tree/layout/navigation/behavioral diffs and reproducible interaction steps to external agents through the existing agent session API, rather than requiring manual screenshot comparisons.
 - [ ] Demonstrate an authorized sample app reconstruction feedback loop: change → CrossWin run → compare reference vs implementation → structured mismatch → verify correction; benchmark iteration time.
 - [ ] Document boundaries: no DRM bypass, credential extraction, unauthorized proprietary assets or assumption of access to closed-source internals.
+
+## Delivery discipline — #6 (apply to every future unchecked slice)
+- [ ] At next Continue: inspect git status and the current verified backend, select **one** high-value acceptance scenario and record its baseline before implementing.
+- [ ] Validate the riskiest assumption with a bounded spike; document actual device/tool availability and fallback rather than guessing.
+- [ ] Implement the smallest complete path, verify actual execution and regression safety, measure latency/resources when relevant, and commit.
+- [ ] Keep issue links, observed evidence, current blocker and the exact next runnable command in the handoff. Preserve previously checked items.
