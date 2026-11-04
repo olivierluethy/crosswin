@@ -81,6 +81,18 @@ public static class Mcp
             "Current session: target identity (project, git revision, runtime), state, error/warning counts, most recent error with file:line.",
             Schema(),
             (env, repo, a) => Capture(() => Commands.SessionStatus(env, new[] { "--json" }))),
+        new("crosswin_compare",
+            "Structural diff of two UI snapshots in the shared node schema (each from crosswin_ui json=true, for any backend): an authorized reference vs the current implementation. Reports elements missing from / extra in the implementation and matched elements whose value, toggle or enabled state changed (set geometry=true to also flag bounds moves). Structural/behavioural, not pixel similarity. Each input is a file path or inline JSON.",
+            Schema(("reference", "string", "Reference UI snapshot: a file path or inline {\"nodes\":[…]} JSON", true),
+                   ("current", "string", "Current UI snapshot: a file path or inline JSON (capture with crosswin_ui json=true)", true),
+                   ("geometry", "boolean", "Also report position/size changes beyond a few pixels", false)),
+            (env, repo, a) => Capture(() =>
+            {
+                var diff = Compare.Diff(Compare.LoadSnapshot(Str(a, "reference")!), Compare.LoadSnapshot(Str(a, "current")!), Flag(a, "geometry"), 6);
+                Console.WriteLine(diff.ToJsonString(SessionLog.Json));
+                var s = diff["summary"]!.AsObject();
+                return s["missing"]!.GetValue<int>() + s["extra"]!.GetValue<int>() + s["changed"]!.GetValue<int>() == 0 ? 0 : 2;
+            })),
         new("crosswin_events",
             "Structured session events as JSON lines: build errors and unhandled exceptions with file/line in the user's source, app output, Wine errors, interactions. Use 'since' with the last seq you saw to get only new events.",
             Schema(("level", "string", "Minimum level: debug, info, warn, error (default info)", false),
