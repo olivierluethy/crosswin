@@ -115,6 +115,7 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log
+- 2026-11-04: **GUI slice 5 — setup from the GUI** (`Gui.cs` `/api/setup` + `/api/setup-status`; setup banner/progress in `Gui/index.html`): a non-developer can install the private .NET + Wine from the window with live progress; Rosetta 2 (the one non-automatable step) is reported in plain language. Already-ready path verified host-side; fresh-machine path pending acceptance. Build clean; JS node --check passes. (#4)
 - 2026-11-04: **GitHub Pages site** (`docs/index.html` landing + `docs/demo.html` labelled simulation + `.nojekyll`): same CrossWin design system, honest support matrix from the evidence ledger, 3-step flow and quick start; demo clearly marked as launching nothing. Preview https://claude.ai/artifact/5MFWwSc9fnyEWKGEnLWeZx . To go live: enable Pages → main/docs. (#4, #6)
 - 2026-11-04: **GUI slice 4** (`Gui.cs` `/api/devices`; mobile target picker + web `--show` in `Gui/index.html`): list phones/emulator with state + plain-language guidance, sensible default target, pass `--phone`/`--serial`/`--show` through run. Host-side verified (devices endpoint, JS node --check). Design preview updated. Build clean. (#4, #5)
 - 2026-11-04: **GUI slice 3** (`Gui.cs` Check/RunApp/Snap/Ui): one GUI flow auto-detects and runs desktop (.csproj), web (URL/.html/static/dev-server) and mobile (Flutter/RN/Android) via the existing backends; type-agnostic result shape with honest per-backend verdicts; snap/ui/run routed by session kind. Fixed a mobile false-positive (git-root escalation) with a folder-local marker guard. Detection verified host-side for all three. Build clean. (#4, #5, #6)
@@ -149,7 +150,7 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 
 ## Non-developer acceptance gate — #4, #6
 - [ ] Validate that a first-time non-developer can launch CrossWin, open a supported sample project and reach a working preview using only guided GUI actions; record blockers and time-to-first-preview.
-- [ ] Ensure no Claude Code, agent account, terminal command or developer jargon is required for the core supported user journey.
+- [ ] Ensure no Claude Code, agent account, terminal command or developer jargon is required for the core supported user journey. — **Setup is now in the GUI** (slice 5): when CrossWin isn't ready the window shows a "Set up CrossWin" button that installs the private .NET + Wine in the background with live progress, and reports the one thing it can't automate (Rosetta 2) in plain language with the exact command. The only remaining terminal step is the very first `./crosswin gui` (a double-click launcher would remove it — see below). Jargon avoided throughout. **Fresh-machine setup-from-GUI not yet verified** (this host is already set up; `/api/setup` correctly returns ready without re-running).
 - [ ] Provide clear plain-language instructions for unavoidable permissions and unsupported platforms, with advanced controls progressively disclosed.
 
 ## Post-baseline autonomous performance optimization — #5, #6

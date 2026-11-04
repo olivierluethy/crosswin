@@ -213,6 +213,10 @@ crosswin gui [--port N] [--no-open]
                        picked by the session kind), returns each window PNG inline as a data URI → the GUI's
                        live Preview (so a non-developer never hunts for the app window).
     GET  /api/ui       runs the backend's `ui --json` (desktop/web/mobile) → the "What's on screen" list.
+    POST /api/setup    runs the one-time `crosswin setup` in the background (private .NET + Wine) so a non-developer
+                       never needs the terminal; returns {ready} if already set up, or {needsManual, manualCommand}
+                       for the one thing it can't automate (Rosetta 2 on Apple Silicon). GET /api/setup-status →
+                       {running, ready, log tail} for the progress panel.
     GET  /api/devices  AndroidTarget.All over AndroidSdk → connected phones/emulator with state + plain-language
                        StateHelp; the mobile card's target picker (never bypasses the phone's trust prompt).
                        RunApp passes the choice through as --phone/--serial, and web's toggle as --show.

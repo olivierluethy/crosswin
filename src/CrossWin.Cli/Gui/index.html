@@ -81,6 +81,15 @@
   .msg{margin-top:18px; padding:14px 16px; border-radius:12px; background:var(--no-bg); color:var(--ink);
     border:1px solid color-mix(in srgb,var(--no) 35%,transparent); font-size:14.5px}
 
+  .setup{margin:24px 0 8px; background:var(--card); border:1px solid var(--hairline-strong); border-radius:14px;
+    padding:18px 20px; box-shadow:var(--shadow)}
+  .setup .row{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
+  .setup .txt{flex:1; min-width:220px}
+  .setup .txt .t{font-weight:620}
+  .setup .txt .s{color:var(--muted); font-size:14px}
+  .setup .log{margin-top:14px; max-height:180px; overflow:auto; background:var(--paper); border:1px solid var(--hairline);
+    border-radius:10px; padding:10px 12px; font-family:var(--mono); font-size:12.5px; color:var(--muted); white-space:pre-wrap}
+
   /* results */
   #results{margin-top:36px; display:flex; flex-direction:column; gap:18px}
   .result-head{font-size:13.5px; color:var(--faint); margin:8px 2px -2px; font-weight:550}
@@ -204,6 +213,7 @@
       <button class="btn" id="check" type="submit">Check it</button>
     </form>
     <div class="recent" id="recent" hidden><b>Recent</b></div>
+    <div class="setup" id="setup" hidden></div>
     <div class="msg" id="msg" hidden role="alert"></div>
 
     <div class="result-head" id="result-head" hidden></div>
@@ -248,6 +258,68 @@ async function loadHost(){
   $("#headline").textContent = HOST.os === "macOS" ? "Run a Windows app on your Mac"
                              : HOST.os === "Linux" ? "Run a Windows app on Linux"
                              : "Run a Windows app here";
+  if(HOST && !HOST.ready && !$("#setup").dataset.busy) showSetupBanner();
+  else if(HOST && HOST.ready && !$("#setup").dataset.busy) $("#setup").hidden = true;
+}
+
+function showSetupBanner(){
+  const box = $("#setup"); box.hidden = false; box.innerHTML = "";
+  const row = el("div","row");
+  const txt = el("div","txt");
+  txt.append(el("div","t","One quick setup first"));
+  txt.append(el("div","s","Before CrossWin can run Windows apps it installs a private copy of .NET and Wine under your home folder. No admin, nothing system-wide."));
+  row.append(txt);
+  const btn = el("button","btn","Set up CrossWin"); btn.onclick = ()=>runSetup(btn);
+  row.append(btn);
+  box.append(row);
+}
+
+async function runSetup(btn){
+  btn.disabled = true; btn.textContent = "Starting…";
+  let d; try{ d = await api("/api/setup",{method:"POST"}); }catch{ d = {error:"Couldn't reach CrossWin. Is the control surface still running in your terminal?"}; }
+  if(d.ready){ $("#setup").hidden = true; await loadHost(); return; }
+  if(d.needsManual){
+    btn.disabled = false; btn.textContent = "Set up CrossWin";
+    const extra = el("div","s"); extra.style.marginTop = "12px";
+    extra.append(span(d.error+" "), el("code",null,d.manualCommand));
+    $("#setup").append(extra);
+    return;
+  }
+  if(d.error){
+    btn.disabled = false; btn.textContent = "Set up CrossWin";
+    const e = el("div","s"); e.style.marginTop = "10px"; e.textContent = d.error;
+    $("#setup").append(e);
+    return;
+  }
+  setupProgress();
+}
+
+function setupProgress(){
+  const box = $("#setup"); box.dataset.busy = "1"; box.innerHTML = "";
+  const row = el("div","row");
+  row.append(el("div","spinner"));
+  const txt = el("div","txt");
+  txt.append(el("div","t","Setting up CrossWin…"));
+  txt.append(el("div","s","This takes a couple of minutes the first time — it downloads .NET and Wine."));
+  row.append(txt);
+  box.append(row);
+  const log = el("div","log"); log.id = "setup-log"; box.append(log);
+  const iv = setInterval(async()=>{
+    let s; try{ s = await api("/api/setup-status"); }catch{ return; }
+    if(s.log!=null){ const l=$("#setup-log"); if(l){ l.textContent = s.log; l.scrollTop = l.scrollHeight; } }
+    if(s.ready){
+      clearInterval(iv); delete box.dataset.busy; box.hidden = true;
+      await loadHost();
+      if($("#path").value.trim()) check();
+    }else if(!s.running){
+      clearInterval(iv); delete box.dataset.busy;
+      $(".spinner")?.remove();
+      const t = box.querySelector(".t"); if(t) t.textContent = "Setup didn't finish";
+      const e = el("div","s"); e.style.marginTop = "10px";
+      e.textContent = "Something went wrong during setup (details above). You can also run  ./crosswin setup  in a terminal to see the full output.";
+      box.append(e);
+    }
+  }, 1500);
 }
 function dot(k){ const d=el("span","dot"); if(k)d.classList.add(k); return d; }
 function span(t){ return el("span",null,t); }
@@ -357,10 +429,11 @@ function actions(p){
     box.append(run);
     if(p.level==="Experimental") box.append(el("span","v-note","It should start — keep the notes above in mind."));
   }else{
-    box.append(el("span","v-note","Almost there: CrossWin needs a one-time setup before it can run Windows apps."));
-    const code = el("code",null,(HOST&&HOST.setupCommand)||"./crosswin setup");
-    const line = el("div","v-note"); line.append(span("In your terminal, run "), code, span(" once."));
-    box.append(line);
+    const note = el("div","v-note"); note.append(span("Finish the one-time setup first — use "));
+    const b = el("button","btn ghost","Set up CrossWin"); b.style.cssText="padding:6px 12px;font-size:13px";
+    b.onclick = ()=>{ document.querySelector("#setup")?.scrollIntoView({behavior:"smooth",block:"center"}); const sb=document.querySelector("#setup .btn"); if(sb) runSetup(sb); };
+    note.append(span("the "), b, span(" button above."));
+    box.append(note);
   }
   return box;
 }

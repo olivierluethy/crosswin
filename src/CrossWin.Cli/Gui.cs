@@ -73,6 +73,8 @@ public static class Gui
         if (path == "/api/recent" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["recent"] = Recent(env) })); return; }
         if (path == "/api/devices" && method == "GET") { Send(ctx, 200, Json(Devices(env))); return; }
         if (path == "/api/check" && method == "POST") { Send(ctx, 200, Json(Check(env, Body(ctx)))); return; }
+        if (path == "/api/setup" && method == "POST") { Send(ctx, 200, Json(StartSetup(env, repo))); return; }
+        if (path == "/api/setup-status" && method == "GET") { Send(ctx, 200, Json(SetupStatus(env))); return; }
         if (path == "/api/run" && method == "POST") { Send(ctx, 200, Json(RunApp(env, repo, Body(ctx)))); return; }
         if (path == "/api/snap" && method == "POST") { Send(ctx, 200, Json(Snap(env))); return; }
         if (path == "/api/ui" && method == "GET") { Send(ctx, 200, Json(Ui(env))); return; }
@@ -374,6 +376,60 @@ public static class Gui
             return new JsonObject { ["error"] = CleanCli((body.Length > 0 ? body : stderr).Split('\n').FirstOrDefault() ?? "Couldn't read the app's controls.") };
         try { return JsonNode.Parse(body)!.AsObject(); }
         catch { return new JsonObject { ["error"] = "Couldn't read the app's controls." }; }
+    }
+
+    private static string SetupLog(HostEnv env) => Path.Combine(env.Home, "gui", "setup.log");
+    private static string SetupPid(HostEnv env) => Path.Combine(env.Home, "gui", "setup.pid");
+
+    /// <summary>Runs the one-time setup from the GUI so a non-developer never needs the terminal. Rosetta 2 is the
+    /// one prerequisite that can't be automated (it needs the user's agreement), so that case is reported plainly.</summary>
+    private static JsonObject StartSetup(HostEnv env, string repo)
+    {
+        bool ready = env.Wine != null && env.PrefixReady && File.Exists(env.AgentDll);
+        if (ready) return new JsonObject { ["ready"] = true };
+        if (env.RosettaAvailable == false)
+            return new JsonObject
+            {
+                ["needsManual"] = true,
+                ["error"] = "CrossWin needs Rosetta 2 first (a one-time Apple install). Run this in Terminal, then come back and set up again:",
+                ["manualCommand"] = "softwareupdate --install-rosetta --agree-to-license",
+            };
+        if (SetupRunning(env)) return new JsonObject { ["started"] = true };
+
+        string wrapper = Path.Combine(repo, "crosswin");
+        if (!File.Exists(wrapper)) return new JsonObject { ["error"] = "Could not find the crosswin launcher to run setup." };
+
+        Directory.CreateDirectory(Path.GetDirectoryName(SetupLog(env))!);
+        try { File.WriteAllText(SetupLog(env), ""); } catch { }
+        // Record the child's pid so setup-status can tell when it finishes; keep the log drained via the shell.
+        string script = $"{Sh(wrapper)} setup >> {Sh(SetupLog(env))} 2>&1 & echo $! > {Sh(SetupPid(env))}; wait";
+        var psi = new ProcessStartInfo("/bin/bash") { UseShellExecute = false };
+        psi.ArgumentList.Add("-lc");
+        psi.ArgumentList.Add(script);
+        try { Process.Start(psi); }
+        catch (Exception ex) { return new JsonObject { ["error"] = $"Could not start setup: {ex.Message}" }; }
+        return new JsonObject { ["started"] = true };
+    }
+
+    private static bool SetupRunning(HostEnv env)
+    {
+        try
+        {
+            if (!File.Exists(SetupPid(env))) return false;
+            if (!int.TryParse(File.ReadAllText(SetupPid(env)).Trim(), out int pid)) return false;
+            using var _ = Process.GetProcessById(pid);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static JsonObject SetupStatus(HostEnv env)
+    {
+        bool ready = env.Wine != null && env.PrefixReady && File.Exists(env.AgentDll);
+        bool running = SetupRunning(env);
+        string log = "";
+        try { if (File.Exists(SetupLog(env))) log = string.Join("\n", File.ReadLines(SetupLog(env)).TakeLast(40)); } catch { }
+        return new JsonObject { ["running"] = running, ["ready"] = ready, ["log"] = log };
     }
 
     private static JsonObject Devices(HostEnv env)
