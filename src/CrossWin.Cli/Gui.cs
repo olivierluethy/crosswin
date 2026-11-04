@@ -83,6 +83,7 @@ public static class Gui
         if (path == "/api/recent" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["recent"] = Recent(env) })); return; }
         if (path == "/api/devices" && method == "GET") { Send(ctx, 200, Json(Devices(env))); return; }
         if (path == "/api/sessions" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["sessions"] = Commands.ListSessions(env) })); return; }
+        if (path == "/api/attach" && method == "POST") { Send(ctx, 200, Json(Attach(env, Body(ctx)))); return; }
         if (path == "/api/check" && method == "POST") { Send(ctx, 200, Json(Check(env, Body(ctx)))); return; }
         if (path == "/api/setup" && method == "POST") { Send(ctx, 200, Json(StartSetup(env, repo))); return; }
         if (path == "/api/setup-status" && method == "GET") { Send(ctx, 200, Json(SetupStatus(env))); return; }
@@ -490,6 +491,22 @@ public static class Gui
         if (!File.Exists(env.SessionFile)) return new JsonObject { ["stopped"] = true };
         try { Commands.Stop(env); } catch (Exception ex) { return new JsonObject { ["error"] = ex.Message }; }
         return new JsonObject { ["stopped"] = true };
+    }
+
+    // Switch the current session to a recorded one so the panel/preview/inspect act on it. Never starts or
+    // stops an app — it only moves the pointer the read commands read (#2/#5: inspect any run, attach to a live one).
+    private static JsonObject Attach(HostEnv env, JsonObject body)
+    {
+        string? id = body["id"]?.ToString();
+        if (string.IsNullOrWhiteSpace(id)) return new JsonObject { ["error"] = "Which run? No session id given." };
+        try
+        {
+            string dir = Commands.ResolveSession(env, id);
+            Directory.CreateDirectory(Path.GetDirectoryName(env.SessionFile)!);
+            File.WriteAllText(env.SessionFile, dir);
+            return SessionStatus(env);
+        }
+        catch (CrossWinException ex) { return new JsonObject { ["error"] = ex.Message }; }
     }
 
     private static JsonObject SessionStatus(HostEnv env)

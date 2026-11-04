@@ -888,6 +888,38 @@ public static class Commands
         return arr;
     }
 
+    /// <summary>Resolve a session id (or a unique prefix) to its directory, guaranteed to sit under the session
+    /// root (no path traversal). Throws a plain CrossWinException on no/ambiguous match.</summary>
+    public static string ResolveSession(HostEnv env, string id)
+    {
+        string root = Path.GetFullPath(Path.GetDirectoryName(env.SessionFile)!);
+        if (!Directory.Exists(root)) throw new CrossWinException("No runs recorded yet. Start one with  ./crosswin run <repo>.");
+        string direct = Path.GetFullPath(Path.Combine(root, id));
+        if (direct.StartsWith(root + Path.DirectorySeparatorChar) && Directory.Exists(direct) && SessionLog.ReadInfo(direct).Count > 0)
+            return direct;
+        var matches = Directory.EnumerateDirectories(root)
+            .Where(d => Path.GetFileName(d).StartsWith(id, StringComparison.OrdinalIgnoreCase) && SessionLog.ReadInfo(d).Count > 0)
+            .ToList();
+        if (matches.Count == 1) return matches[0];
+        if (matches.Count == 0) throw new CrossWinException($"No session matches '{id}'. See  ./crosswin sessions  for the list.");
+        throw new CrossWinException($"'{id}' matches {matches.Count} sessions; use the full id from  ./crosswin sessions.");
+    }
+
+    /// <summary>Make a recorded session the current one (what ui/events/snap/stop act on). Switching the pointer
+    /// never starts or stops a runner — it only changes which session the read/inspect commands read.</summary>
+    public static int Attach(HostEnv env, string[] args)
+    {
+        string? id = args.FirstOrDefault(a => !a.StartsWith("--"));
+        if (id == null) throw new CrossWinException("Usage: crosswin attach <session-id>   (see  ./crosswin sessions).");
+        string dir = ResolveSession(env, id);
+        Directory.CreateDirectory(Path.GetDirectoryName(env.SessionFile)!);
+        File.WriteAllText(env.SessionFile, dir);
+        var info = SessionLog.ReadInfo(dir);
+        Console.WriteLine($"Current session is now  {info["id"]?.ToString() ?? Path.GetFileName(dir)}  ({info["project"]}, {LiveState(info)}).");
+        Console.WriteLine("ui / events / snap / stop now act on it. This started or stopped nothing.");
+        return 0;
+    }
+
     public static int Sessions(HostEnv env, string[] args)
     {
         var list = ListSessions(env);
