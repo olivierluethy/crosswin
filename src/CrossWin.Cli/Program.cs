@@ -30,10 +30,12 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
                                                Structured session events: build errors with file/line,
                                                unhandled exceptions with stack, app output, interactions
           crosswin session [--json]            Target identity (project, revision, runtime), state, counts
-          crosswin compare <reference.json> <current.json> [--geometry [px]] [--json]
-                                               Structural diff of two UI snapshots (from  ui --json): elements
-                                               missing/extra and value/toggle/enabled/bounds changes. Works for
-                                               desktop, web and mobile (same node schema). Exit 2 if they differ
+          crosswin compare <reference> <current> [--geometry [px]] [--json]
+                                               Diff two UI snapshots (from  ui --json): missing/extra elements and
+                                               value/toggle/enabled/bounds changes; or two event traces (from
+                                               events --json): resolved vs new (regression) vs persisting errors
+                                               and whether the interaction sequence matches. Auto-detected; works
+                                               for desktop, web and mobile. Exit 2 on differences / regressions
           crosswin stop                        Stop the running app of the current session
           crosswin mcp                         Optional MCP server (stdio) for AI agent hosts; same sessions
 

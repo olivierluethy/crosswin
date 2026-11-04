@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace CrossWin;
 
@@ -108,7 +109,17 @@ public static class Compare
             else files.Add(args[i]);
         }
         if (files.Count < 2)
-            throw new CrossWinException("Usage: crosswin compare <reference.json> <current.json> [--geometry [px]] [--json]\n  Capture each with: crosswin ui --json  (or  crosswin web ui --json / crosswin mobile ui --json).");
+            throw new CrossWinException("Usage: crosswin compare <reference> <current> [--geometry [px]] [--json]\n  UI snapshots from  ui --json , or event traces from  events --json  (auto-detected).");
+
+        // Auto-detect: event traces have "kind"; UI snapshots have "nodes"/"role".
+        bool events = FirstObject(files[0]) is { } fo && fo["kind"] != null;
+        if (events)
+        {
+            var ediff = DiffEvents(LoadEvents(files[0]), LoadEvents(files[1]));
+            if (json) Console.WriteLine(ediff.ToJsonString(SessionLog.Json));
+            else PrintEventsText(ediff);
+            return ediff["summary"]!["regressions"]!.GetValue<int>() == 0 ? 0 : 2;
+        }
 
         var diff = Diff(LoadSnapshot(files[0]), LoadSnapshot(files[1]), geometry, tol);
         if (json) Console.WriteLine(diff.ToJsonString(SessionLog.Json));
@@ -117,6 +128,128 @@ public static class Compare
         var s = diff["summary"]!.AsObject();
         int issues = s["missing"]!.GetValue<int>() + s["extra"]!.GetValue<int>() + s["changed"]!.GetValue<int>();
         return issues == 0 ? 0 : 2; // non-zero so it is usable as an assertion
+    }
+
+    // ------------------------------------------------------------------ behavioural (event-trace) comparison
+
+    /// <summary>
+    /// Compares two session event traces (from <c>events --json</c>): which errors/warnings the implementation
+    /// resolved versus the reference, which are new (regressions) and which persist, plus whether the recorded
+    /// interaction sequence matches. Error identity ignores volatile numbers/addresses so the same failure groups.
+    /// </summary>
+    public static JsonObject DiffEvents(List<JsonObject> reference, List<JsonObject> implementation)
+    {
+        var refErr = Problems(reference);
+        var implErr = Problems(implementation);
+
+        JsonArray List(IEnumerable<string> keys, Dictionary<string, JsonObject> from) =>
+            Cap(new JsonArray(keys.OrderBy(k => k).Select(k => (JsonNode?)from[k].DeepClone()).ToArray()));
+
+        var resolved = refErr.Keys.Where(k => !implErr.ContainsKey(k)).ToList();
+        var regressions = implErr.Keys.Where(k => !refErr.ContainsKey(k)).ToList();
+        var persisting = refErr.Keys.Where(implErr.ContainsKey).ToList();
+
+        var refActs = Actions(reference);
+        var implActs = Actions(implementation);
+
+        return new JsonObject
+        {
+            ["summary"] = new JsonObject
+            {
+                ["referenceProblems"] = refErr.Count,
+                ["implementationProblems"] = implErr.Count,
+                ["resolved"] = resolved.Count,
+                ["regressions"] = regressions.Count,
+                ["persisting"] = persisting.Count,
+                ["interactionsMatch"] = refActs.SequenceEqual(implActs),
+                ["referenceInteractions"] = refActs.Count,
+                ["implementationInteractions"] = implActs.Count,
+            },
+            ["resolved"] = List(resolved, refErr),
+            ["regressions"] = List(regressions, implErr),
+            ["persisting"] = List(persisting, implErr),
+        };
+    }
+
+    public static void PrintEventsText(JsonObject diff)
+    {
+        var s = diff["summary"]!.AsObject();
+        Console.WriteLine($"compare (behaviour): reference {s["referenceProblems"]} problem(s), implementation {s["implementationProblems"]} — resolved {s["resolved"]}, regressions {s["regressions"]}, persisting {s["persisting"]}");
+        Console.WriteLine($"  interactions: reference {s["referenceInteractions"]}, implementation {s["implementationInteractions"]}, sequence matches: {s["interactionsMatch"]}");
+        Section("regressions (new in implementation)", diff["regressions"]!.AsArray(), ProblemLine("+ "));
+        Section("resolved (gone from implementation)", diff["resolved"]!.AsArray(), ProblemLine("- "));
+        Section("persisting (in both)", diff["persisting"]!.AsArray(), ProblemLine("~ "));
+        if (s["regressions"]!.GetValue<int>() == 0 && s["resolved"]!.GetValue<int>() == 0 && s["persisting"]!.GetValue<int>() == 0)
+            Console.WriteLine("No problems in either trace.");
+    }
+
+    private static Func<JsonObject, string> ProblemLine(string prefix) => o =>
+    {
+        string loc = o["file"] is { } f ? $"  {f}:{o["line"]}" : "";
+        string? tc = o["type"]?.ToString() ?? o["code"]?.ToString();
+        return $"  {prefix}[{o["level"]}] {o["kind"]}  {(tc is { Length: > 0 } ? tc + ": " : "")}{o["msg"]}{loc}";
+    };
+
+    // Error/warning events keyed by a signature that ignores volatile numbers so the same failure groups.
+    private static Dictionary<string, JsonObject> Problems(List<JsonObject> events)
+    {
+        var map = new Dictionary<string, JsonObject>();
+        foreach (var e in events)
+        {
+            string level = e["level"]?.ToString() ?? "";
+            if (level is not ("error" or "warn")) continue;
+            string kind = e["kind"]?.ToString() ?? "";
+            string tc = e["type"]?.ToString() ?? e["code"]?.ToString() ?? "";
+            string msg = Regex.Replace((e["msg"]?.ToString() ?? "").ToLowerInvariant(), @"0x[0-9a-f]+|\d+", "#").Trim();
+            string file = e["file"]?.ToString() ?? "";
+            string key = $"{kind}|{tc}|{msg}|{file}";
+            if (!map.ContainsKey(key))
+                map[key] = new JsonObject
+                {
+                    ["kind"] = kind, ["level"] = level, ["msg"] = e["msg"]?.ToString() ?? "",
+                    ["type"] = e["type"]?.ToString(), ["code"] = e["code"]?.ToString(),
+                    ["file"] = e["file"]?.ToString(), ["line"] = e["line"]?.DeepClone(),
+                };
+        }
+        return map;
+    }
+
+    private static List<string> Actions(List<JsonObject> events) =>
+        events.Where(e => e["kind"]?.ToString() == "interaction.batch")
+            .SelectMany(e => (e["actions"] as JsonArray)?.Select(x => x!.ToString()) ?? Enumerable.Empty<string>())
+            .ToList();
+
+    private static List<JsonObject> LoadEvents(string pathOrJson)
+    {
+        string text = File.Exists(pathOrJson) ? File.ReadAllText(pathOrJson) : pathOrJson;
+        var list = new List<JsonObject>();
+        try { if (JsonNode.Parse(text) is JsonArray arr) { list.AddRange(arr.OfType<JsonObject>()); return list; } } catch (System.Text.Json.JsonException) { }
+        foreach (string line in text.Split('\n'))
+        {
+            string t = line.Trim();
+            if (t.Length == 0) continue;
+            try { if (JsonNode.Parse(t) is JsonObject o) list.Add(o); } catch (System.Text.Json.JsonException) { }
+        }
+        return list;
+    }
+
+    private static JsonObject? FirstObject(string pathOrJson)
+    {
+        string text = File.Exists(pathOrJson) ? File.ReadAllText(pathOrJson) : pathOrJson;
+        try
+        {
+            var n = JsonNode.Parse(text);
+            if (n is JsonObject o) return o;
+            if (n is JsonArray a) return a.OfType<JsonObject>().FirstOrDefault();
+        }
+        catch (System.Text.Json.JsonException) { }
+        foreach (string line in text.Split('\n'))
+        {
+            string t = line.Trim();
+            if (t.Length == 0) continue;
+            try { return JsonNode.Parse(t) as JsonObject; } catch (System.Text.Json.JsonException) { }
+        }
+        return null;
     }
 
     public static void PrintText(JsonObject diff)
