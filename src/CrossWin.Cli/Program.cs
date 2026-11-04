@@ -32,6 +32,7 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
                                                Structured session events: build errors with file/line,
                                                unhandled exceptions with stack, app output, interactions
           crosswin session [--json]            Target identity (project, revision, runtime), state, counts
+          crosswin sessions [--json]           List every run with its state and error counts (* = current)
           crosswin compare <reference> <current> [--geometry [px]] [--json]
                                                Diff two UI snapshots (from  ui --json): missing/extra elements and
                                                value/toggle/enabled/bounds changes; or two event traces (from
@@ -63,6 +64,7 @@ try
         "ui" => Commands.Ui(env, args.Skip(1).ToArray()),
         "events" => Commands.Events(env, args.Skip(1).ToArray()),
         "session" => Commands.SessionStatus(env, args.Skip(1).ToArray()),
+        "sessions" => Commands.Sessions(env, args.Skip(1).ToArray()),
         "compare" when args.Length > 1 => Compare.Run(args.Skip(1).ToArray()),
         "stop" => Commands.Stop(env),
         "gui" => Gui.Serve(env, repo, args.Skip(1).ToArray()),

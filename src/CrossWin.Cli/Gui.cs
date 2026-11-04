@@ -82,6 +82,7 @@ public static class Gui
         if (path == "/api/events" && method == "GET") { Send(ctx, 200, Json(EventsStatus(env, ctx.Request))); return; }
         if (path == "/api/recent" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["recent"] = Recent(env) })); return; }
         if (path == "/api/devices" && method == "GET") { Send(ctx, 200, Json(Devices(env))); return; }
+        if (path == "/api/sessions" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["sessions"] = Commands.ListSessions(env) })); return; }
         if (path == "/api/check" && method == "POST") { Send(ctx, 200, Json(Check(env, Body(ctx)))); return; }
         if (path == "/api/setup" && method == "POST") { Send(ctx, 200, Json(StartSetup(env, repo))); return; }
         if (path == "/api/setup-status" && method == "GET") { Send(ctx, 200, Json(SetupStatus(env))); return; }
@@ -366,11 +367,6 @@ public static class Gui
         ["dataUri"] = "data:image/png;base64," + Convert.ToBase64String(png),
     };
 
-    private static bool Alive(int pid)
-    {
-        try { return !Process.GetProcessById(pid).HasExited; } catch (ArgumentException) { return false; }
-    }
-
     private static string SessionKind(HostEnv env)
     {
         try
@@ -505,12 +501,9 @@ public static class Gui
         var events = SessionLog.ReadEvents(dir);
         int errors = events.Count(e => e["level"]?.ToString() == "error");
         int warns = events.Count(e => e["level"]?.ToString() == "warn");
-        // A runner killed without cleanup (e.g. the terminal's Ctrl-C) can leave state "running": verify the pid,
-        // so the GUI never reattaches to a dead session. Android has no runnerPid (device-tracked), so skip it.
-        string state = info["state"]?.ToString() ?? "unknown";
-        if (info["kind"]?.ToString() != "android" && state is "running" or "starting" or "building"
-            && info["runnerPid"] is { } rp && int.TryParse(rp.ToString(), out int pid) && !Alive(pid))
-            state = "stopped";
+        // A runner killed without cleanup (e.g. the terminal's Ctrl-C) can leave state "running": the shared
+        // liveness check reports it "stopped", so the GUI never reattaches to a dead session.
+        string state = Commands.LiveState(info);
         return new JsonObject
         {
             ["id"] = info["id"]?.DeepClone() ?? Path.GetFileName(dir),

@@ -77,6 +77,22 @@
     padding:5px 12px; font-size:13.5px;
   }
   .chip:hover{border-color:var(--accent)}
+  .runs{margin:18px 2px 0}
+  .runs .rh{font-size:13px; font-weight:550; color:var(--faint); margin:0 2px 8px; display:flex; align-items:center; gap:8px}
+  .run-row{display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:var(--card);
+    border:1px solid var(--hairline-strong); border-radius:12px; padding:11px 14px; margin-bottom:8px; color:var(--ink);
+    font:inherit; cursor:default}
+  .run-row.live{cursor:pointer}
+  .run-row.live:hover{border-color:var(--accent)}
+  .run-row .rdot{flex:0 0 auto; width:9px; height:9px; border-radius:50%; background:var(--faint)}
+  .run-row.live .rdot{background:var(--ready); box-shadow:0 0 0 4px var(--ready-bg)}
+  .run-row .rname{font-weight:550; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .run-row .rkind{font-size:12px; color:var(--muted); background:var(--paper); border:1px solid var(--hairline);
+    padding:1px 8px; border-radius:999px; flex:0 0 auto}
+  .run-row .rstate{font-size:13px; color:var(--muted); margin-left:auto; flex:0 0 auto}
+  .run-row .rcount{font-size:11px; font-weight:650; padding:1px 7px; border-radius:999px; flex:0 0 auto}
+  .run-row .rcount.err{background:var(--no-bg); color:var(--no)}
+  .run-row .rcount.warn{background:var(--limits-bg); color:var(--limits)}
 
   .msg{margin-top:18px; padding:14px 16px; border-radius:12px; background:var(--no-bg); color:var(--ink);
     border:1px solid color-mix(in srgb,var(--no) 35%,transparent); font-size:14.5px}
@@ -213,6 +229,7 @@
       <button class="btn" id="check" type="submit">Check it</button>
     </form>
     <div class="recent" id="recent" hidden><b>Recent</b></div>
+    <div class="runs" id="runs" hidden></div>
     <div class="setup" id="setup" hidden></div>
     <div class="msg" id="msg" hidden role="alert"></div>
 
@@ -245,6 +262,47 @@ async function init(){
   await loadRecent();
   $("#form").addEventListener("submit", e=>{ e.preventDefault(); check(); });
   resumeSession();
+  loadSessions();
+}
+
+// Honest, read-only overview of every run this computer has recorded (newest first),
+// each with its real state (a runner killed without cleanup reads as "stopped", not "running")
+// and error/warning counts. A live run can be reopened; nothing here restarts an app.
+async function loadSessions(){
+  let data; try{ data = await api("/api/sessions"); }catch{ return; }
+  const box = $("#runs");
+  const rows = (data.sessions||[]);
+  if(!rows.length){ box.hidden = true; box.innerHTML = ""; return; }
+  box.innerHTML = "";
+  const live = rows.filter(r=>r.live).length;
+  const head = el("div","rh");
+  head.append(span(`Your runs · ${rows.length}`));
+  if(live) head.append(span(`${live} running now`));
+  box.append(head);
+  for(const r of rows.slice(0,8)){
+    const row = el("div","run-row" + (r.live && r.current ? " live" : ""));
+    row.append(el("span","rdot"));
+    row.append(el("span","rname", r.project || r.id || "a run"));
+    row.append(el("span","rkind", runKindWord(r.kind)));
+    const errs = r.errors|0, warns = r.warnings|0;
+    if(errs) row.append(el("span","rcount err", errs===1?"1 error":errs+" errors"));
+    if(warns) row.append(el("span","rcount warn", warns===1?"1 warning":warns+" warnings"));
+    row.append(el("span","rstate", runStateWord(r)));
+    if(r.live && r.current){
+      row.title = "Open this running app";
+      row.onclick = ()=>openRunPanel(r.project || "your app", true);
+    }
+    box.append(row);
+  }
+  box.hidden = false;
+}
+function runKindWord(k){ return k==="web"?"Website" : k==="android"?"Android app" : "Windows app"; }
+function runStateWord(r){
+  if(r.live) return r.current ? "Running — open" : "Running now";
+  if(r.unverified) return "Last seen running on the device";
+  const s = r.state;
+  return s==="exited"?"Finished" : s==="failed"?"Didn't start" : s==="stopped"?"Stopped"
+       : s==="crashed"?"Crashed" : s==="build-failed"?"Didn't build" : (s||"—");
 }
 
 // Opening the window must never restart a running app — if one is already running
@@ -553,6 +611,7 @@ function openRunPanel(project, attached){
   panel.append(evbox);
   box.append(panel);
   if(!attached) box.scrollIntoView({behavior:"smooth", block:"nearest"});
+  loadSessions();
 
   const TERMINAL = ["exited","stopped","error","build-failed","app-not-running","device-disconnected"];
   let lastSeq = 0, firstEvents = true, previewShown = false;
@@ -581,7 +640,7 @@ function openRunPanel(project, attached){
       $("#events").scrollTop = $("#events").scrollHeight;
     }
     // Stop polling once the app is no longer live — otherwise two fetches fire every 1.2s forever.
-    if(gone || TERMINAL.includes(s.state)){ clearInterval(runPolling); runPolling = null; }
+    if(gone || TERMINAL.includes(s.state)){ clearInterval(runPolling); runPolling = null; loadSessions(); }
   }, 1200);
 }
 

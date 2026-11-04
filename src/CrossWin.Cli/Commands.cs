@@ -835,6 +835,75 @@ public static class Commands
         return 0;
     }
 
+    /// <summary>Liveness-checked state of a session (a runner killed without cleanup leaves state "running").</summary>
+    public static string LiveState(System.Text.Json.Nodes.JsonObject info)
+    {
+        string state = info["state"]?.ToString() ?? "unknown";
+        if (info["kind"]?.ToString() != "android" && state is "running" or "starting" or "building"
+            && info["runnerPid"] is { } rp && int.TryParse(rp.ToString(), out int pid) && !Alive(pid))
+            return "stopped";
+        return state;
+    }
+
+    /// <summary>Every run this machine has recorded, newest first, with liveness-checked state and counts.
+    /// Read-only overview (#2/#5/#6); does not change the current-session pointer.</summary>
+    public static System.Text.Json.Nodes.JsonArray ListSessions(HostEnv env)
+    {
+        var arr = new System.Text.Json.Nodes.JsonArray();
+        string root = Path.GetDirectoryName(env.SessionFile)!;
+        if (!Directory.Exists(root)) return arr;
+        string? current = File.Exists(env.SessionFile) ? File.ReadAllText(env.SessionFile).Trim() : null;
+        var dirs = Directory.EnumerateDirectories(root).ToList();
+        var rows = new List<(DateTime When, System.Text.Json.Nodes.JsonObject Row)>();
+        foreach (string dir in dirs)
+        {
+            var info = SessionLog.ReadInfo(dir);
+            if (info.Count == 0) continue;
+            var events = SessionLog.ReadEvents(dir);
+            DateTime when = info["startedAt"] is { } s && DateTime.TryParse(s.ToString(), null, System.Globalization.DateTimeStyles.RoundtripKind, out var d)
+                ? d.ToUniversalTime() : Directory.GetCreationTimeUtc(dir);
+            string state = LiveState(info);
+            // "live" means we have *confirmed* the run is still going. Desktop/web runs have a runnerPid
+            // LiveState already checked, so a live-ish state there is verified. Android runs are device-tracked
+            // with no host pid, so a stale "running" cannot be confirmed from here: report it unverified, never
+            // a confident "running now".
+            bool android = info["kind"]?.ToString() == "android";
+            bool liveish = state is "running" or "starting" or "building";
+            rows.Add((when, new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = info["id"]?.DeepClone() ?? Path.GetFileName(dir),
+                ["kind"] = info["kind"]?.DeepClone() ?? "desktop",
+                ["project"] = info["project"]?.DeepClone(),
+                ["state"] = state,
+                ["live"] = liveish && !android,
+                ["unverified"] = liveish && android,
+                ["current"] = dir == current,
+                ["startedAt"] = info["startedAt"]?.DeepClone(),
+                ["errors"] = events.Count(e => e["level"]?.ToString() == "error"),
+                ["warnings"] = events.Count(e => e["level"]?.ToString() == "warn"),
+                ["dir"] = dir,
+            }));
+        }
+        foreach (var r in rows.OrderByDescending(r => r.When)) arr.Add(r.Row);
+        return arr;
+    }
+
+    public static int Sessions(HostEnv env, string[] args)
+    {
+        var list = ListSessions(env);
+        if (args.Contains("--json")) { Console.WriteLine(list.ToJsonString(new System.Text.Json.JsonSerializerOptions(SessionLog.Json) { WriteIndented = true })); return 0; }
+        if (list.Count == 0) { Console.WriteLine("No runs yet. Start one with  ./crosswin run <repo>  (or web/mobile run)."); return 0; }
+        foreach (var r in list)
+        {
+            string mark = r!["current"]?.GetValue<bool>() == true ? "*" : " ";
+            string errs = (r["errors"]!.GetValue<int>() is int e && e > 0) ? $", {e} err" : "";
+            string warns = (r["warnings"]!.GetValue<int>() is int w && w > 0) ? $", {w} warn" : "";
+            Console.WriteLine($"{mark} {r["id"],-26} {r["kind"],-8} {r["state"],-10} {r["project"]}{errs}{warns}");
+        }
+        Console.WriteLine("\n* = current session (what ui/events/snap/stop act on). Read any with  ./crosswin session.");
+        return 0;
+    }
+
     /// <summary>Stops the app of the current session (and with it the `run` process), if still running.</summary>
     public static int Stop(HostEnv env)
     {
