@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CrossWin</title>
+<meta name="description" content="Run existing Windows (WPF/WinForms), web and Flutter apps on macOS and Linux — with an honest, up-front verdict on whether yours will run.">
+<style>
+  :root{
+    --paper:#FBFAF7; --card:#FFFFFF; --ink:#23262F; --muted:#5B6270; --faint:#8A90A0;
+    --hairline:#E7E4DC; --hairline-strong:#D8D4C9; --accent:#3B45C4; --accent-ink:#2A32A8;
+    --ready:#2F8F5B; --ready-bg:#E9F4EE; --limits:#B8791B; --limits-bg:#F7EFDD; --no:#C0504A; --no-bg:#F7E7E5;
+    --shadow:0 1px 2px rgba(35,38,47,.05), 0 10px 30px rgba(35,38,47,.08);
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+    --paper:#14161B; --card:#1B1E25; --ink:#ECEDF1; --muted:#A3A9B8; --faint:#777E90;
+    --hairline:#2A2E38; --hairline-strong:#363B47; --accent:#8B93F2; --accent-ink:#A7AEF7;
+    --ready:#5FBE86; --ready-bg:#17271F; --limits:#D9A94E; --limits-bg:#2A2314; --no:#E0877F; --no-bg:#2C1A18;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 14px 40px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="dark"]{
+    --paper:#14161B; --card:#1B1E25; --ink:#ECEDF1; --muted:#A3A9B8; --faint:#777E90;
+    --hairline:#2A2E38; --hairline-strong:#363B47; --accent:#8B93F2; --accent-ink:#A7AEF7;
+    --ready:#5FBE86; --ready-bg:#17271F; --limits:#D9A94E; --limits-bg:#2A2314; --no:#E0877F; --no-bg:#2C1A18;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 14px 40px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto} }
+  body{margin:0; font-family:var(--sans); color:var(--ink); background:var(--paper); line-height:1.55;
+    -webkit-font-smoothing:antialiased; font-size:16px}
+  .wrap{max-width:1000px; margin:0 auto; padding:0 20px}
+  a{color:var(--accent-ink)}
+  a:focus-visible, button:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:6px}
+
+  nav{display:flex; align-items:center; gap:16px; padding:20px 0; border-bottom:1px solid var(--hairline)}
+  .brand{display:flex; align-items:center; gap:10px; font-weight:650; letter-spacing:-.01em; font-size:17px}
+  .brand svg{width:22px; height:22px}
+  nav .spacer{margin-left:auto}
+  nav a{color:var(--muted); text-decoration:none; font-size:14.5px}
+  nav a:hover{color:var(--ink)}
+  .ghlink{display:inline-flex; align-items:center; gap:7px; border:1px solid var(--hairline-strong);
+    padding:8px 14px; border-radius:9px; color:var(--ink)!important}
+  .ghlink:hover{border-color:var(--accent)}
+
+  /* hero */
+  .hero{display:grid; grid-template-columns:1.1fr .9fr; gap:48px; align-items:center; padding:72px 0 64px}
+  @media (max-width:800px){ .hero{grid-template-columns:1fr; gap:36px; padding:48px 0 40px} }
+  h1{font-size:44px; line-height:1.08; letter-spacing:-.025em; margin:0 0 18px; font-weight:700}
+  @media (max-width:800px){ h1{font-size:34px} }
+  .hero p{font-size:18px; color:var(--muted); margin:0 0 28px; max-width:56ch}
+  .cta{display:flex; gap:12px; flex-wrap:wrap}
+  .btn{display:inline-flex; align-items:center; gap:8px; border:0; border-radius:10px; padding:13px 22px;
+    font-family:inherit; font-size:15.5px; font-weight:620; cursor:pointer; text-decoration:none}
+  .btn.primary{background:var(--accent); color:#fff}
+  .btn.primary:hover{filter:brightness(1.07)}
+  .btn.secondary{background:transparent; color:var(--ink); border:1px solid var(--hairline-strong)}
+  .btn.secondary:hover{border-color:var(--accent)}
+
+  /* hero verdict card (the signature visual) */
+  .demo-card{background:var(--card); border:1px solid var(--hairline); border-radius:16px; box-shadow:var(--shadow); overflow:hidden}
+  .dc-bar{display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--hairline); color:var(--faint); font-size:12.5px}
+  .dc-bar .d{width:8px; height:8px; border-radius:50%; background:var(--ready)}
+  .dc-field{display:flex; gap:8px; padding:14px 16px; align-items:center}
+  .dc-field .path{flex:1; font-family:var(--mono); font-size:13px; color:var(--muted); background:var(--paper);
+    border:1px solid var(--hairline); border-radius:8px; padding:9px 12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .dc-field .mini{background:var(--accent); color:#fff; border-radius:8px; padding:9px 14px; font-size:13px; font-weight:600}
+  .dc-verdict{display:flex; gap:14px; align-items:flex-start; padding:4px 18px 18px}
+  .lamp{width:34px; height:34px; border-radius:50%; flex:0 0 auto; margin-top:2px; position:relative}
+  .lamp::after{content:""; position:absolute; inset:9px; border-radius:50%; background:var(--card)}
+  .lamp.ready{background:var(--ready); box-shadow:0 0 0 6px var(--ready-bg)}
+  .lamp.limits{background:var(--limits); box-shadow:0 0 0 6px var(--limits-bg)}
+  .vt .nm{font-weight:660; font-size:16px}
+  .vt .wd{font-size:13.5px; font-weight:620}
+  .vt .wd.ready{color:var(--ready)} .vt .wd.limits{color:var(--limits)}
+  .vt .sm{color:var(--muted); font-size:13.5px; margin-top:4px; max-width:40ch}
+
+  /* sections */
+  section{padding:56px 0; border-top:1px solid var(--hairline)}
+  .eyebrow{color:var(--accent-ink); font-weight:600; font-size:14px; margin:0 0 8px}
+  h2{font-size:28px; letter-spacing:-.02em; margin:0 0 10px; font-weight:680}
+  .lead{color:var(--muted); font-size:17px; margin:0 0 28px; max-width:62ch}
+
+  .honest{background:var(--card); border:1px solid var(--hairline); border-radius:14px; padding:24px 26px; display:flex; gap:16px; align-items:flex-start}
+  .honest svg{flex:0 0 auto; color:var(--accent); margin-top:3px}
+  .honest p{margin:0; font-size:16px; color:var(--ink)}
+
+  .steps{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
+  @media (max-width:720px){ .steps{grid-template-columns:1fr} }
+  .step{background:var(--card); border:1px solid var(--hairline); border-radius:14px; padding:22px}
+  .step .n{font-family:var(--mono); font-size:13px; color:var(--faint)}
+  .step h3{margin:6px 0 8px; font-size:18px; letter-spacing:-.01em}
+  .step p{margin:0; color:var(--muted); font-size:14.5px}
+
+  table.support{width:100%; border-collapse:collapse; font-size:14.5px}
+  .support th{text-align:left; color:var(--faint); font-weight:550; font-size:13px; padding:0 12px 10px}
+  .support td{padding:14px 12px; border-top:1px solid var(--hairline); vertical-align:top}
+  .support td:first-child{font-weight:600; white-space:nowrap}
+  .tag{display:inline-block; font-size:12px; font-weight:650; padding:3px 10px; border-radius:999px; white-space:nowrap}
+  .tag.ready{background:var(--ready-bg); color:var(--ready)}
+  .tag.limits{background:var(--limits-bg); color:var(--limits)}
+  .tag.no{background:var(--no-bg); color:var(--no)}
+  .support .note{color:var(--muted); font-size:13.5px; margin-top:4px}
+
+  .demo-wide{background:var(--card); border:1px solid var(--hairline); border-radius:14px; padding:26px; text-align:center}
+  .sim{display:inline-block; font-size:12px; font-weight:650; color:var(--limits); background:var(--limits-bg);
+    padding:4px 12px; border-radius:999px; margin-bottom:14px}
+
+  pre{background:var(--card); border:1px solid var(--hairline); border-radius:12px; padding:18px 20px; overflow:auto;
+    font-family:var(--mono); font-size:13.5px; line-height:1.7; color:var(--ink)}
+  pre .c{color:var(--faint)}
+  pre b{color:var(--accent-ink); font-weight:600}
+
+  footer{border-top:1px solid var(--hairline); padding:36px 0 56px; color:var(--muted); font-size:13.5px}
+  footer .fnote{max-width:70ch; margin:0 0 14px}
+  footer a{color:var(--accent-ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <span class="brand">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="2.5" y="4.5" width="19" height="13" rx="2.2" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M8 21h8M12 17.5V21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M9 8.5l3 3-3 3M14.5 14.5h1.5" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      CrossWin
+    </span>
+    <span class="spacer"></span>
+    <a href="#how">How it works</a>
+    <a href="#support">What runs</a>
+    <a href="#start">Get started</a>
+    <a class="ghlink" href="https://github.com/olivierluethy/crosswin">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <h1>Run Windows apps on your Mac. Without Windows.</h1>
+      <p>CrossWin builds and runs your existing WinForms and WPF apps on macOS and Linux, and tells you up front — honestly — whether yours will run. Web and Flutter apps too.</p>
+      <div class="cta">
+        <a class="btn primary" href="#start">Get started</a>
+        <a class="btn secondary" href="demo.html">Try the demo</a>
+      </div>
+    </div>
+    <div class="demo-card" aria-hidden="true">
+      <div class="dc-bar"><span class="d"></span> CrossWin · your Mac</div>
+      <div class="dc-field"><span class="path">~/code/HelloWpf</span><span class="mini">Check it</span></div>
+      <div class="dc-verdict">
+        <span class="lamp ready"></span>
+        <div class="vt">
+          <div class="nm">HelloWpf</div>
+          <div class="wd ready">Ready to run</div>
+          <div class="sm">A WPF app. CrossWin has run apps like it — it should start and respond to clicks and typing.</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section id="honest" style="border-top:0; padding-top:0">
+    <div class="honest">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12l2 2 4-4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <p><b>No magic, no promises.</b> CrossWin checks your app against ones it has actually run, labels what's supported, experimental or unsupported, and never fakes a result. Compatibility is a goal it measures, not a guarantee.</p>
+    </div>
+  </section>
+
+  <section id="how">
+    <p class="eyebrow">How it works</p>
+    <h2>Three steps, no terminal</h2>
+    <p class="lead">Open the CrossWin window, point it at a project, and follow the one obvious next action.</p>
+    <div class="steps">
+      <div class="step"><div class="n">Step 1</div><h3>Open your project</h3><p>Point CrossWin at a folder — a Windows app, a website, or a Flutter app — or a web address.</p></div>
+      <div class="step"><div class="n">Step 2</div><h3>Check</h3><p>A plain-language verdict: Ready to run, Worth a try, or Not a match — with the reasons, not jargon.</p></div>
+      <div class="step"><div class="n">Step 3</div><h3>Run</h3><p>CrossWin builds and launches the real app. See it in the window, click it, and read any errors with the exact file and line.</p></div>
+    </div>
+  </section>
+
+  <section id="support">
+    <p class="eyebrow">What runs</p>
+    <h2>Honest support, from real runs</h2>
+    <p class="lead">“Supported” means CrossWin has run a comparable app end to end on a real machine — not that yours is guaranteed. Every verdict links back to evidence in the repository.</p>
+    <table class="support">
+      <thead><tr><th>App type</th><th>Status</th><th>Details</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>WPF &amp; WinForms<br>(.NET 6+)</td>
+          <td><span class="tag ready">Supported</span></td>
+          <td>Builds and runs under Wine on macOS (Apple Silicon) and Linux (x86_64); verified with Microsoft's WPF samples and more. Screenshot and real click/type for inspection.
+            <div class="note">Apps drawing proprietary Segoe icon fonts show those glyphs as boxes until you add the font.</div></td>
+        </tr>
+        <tr>
+          <td>.NET Framework 4.x</td>
+          <td><span class="tag limits">Experimental</span></td>
+          <td>Legacy projects are translated and run on Wine Mono. WPF support is incomplete and the live screenshot/click tools aren't available for these.</td>
+        </tr>
+        <tr>
+          <td>Web<br>(React, Vite, Next, static, URL)</td>
+          <td><span class="tag ready">Supported</span></td>
+          <td>Runs in a real browser and streams console messages, failed requests and errors — mapped back to your source.</td>
+        </tr>
+        <tr>
+          <td>Flutter / React Native / Android</td>
+          <td><span class="tag limits">On a device</span></td>
+          <td>Builds and runs on a connected Android phone (you allow it on the phone) or an emulator, with live diagnostics.</td>
+        </tr>
+        <tr>
+          <td>iOS</td>
+          <td><span class="tag no">Needs a Mac</span></td>
+          <td>Apple's tools are required to build and sign iOS apps; CrossWin doesn't run these itself.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="demo">
+    <p class="eyebrow">See it</p>
+    <h2>A look at the CrossWin window</h2>
+    <p class="lead">The real app runs on your machine and launches your actual programs. The demo below is the same interface with stand-in data, so you can click around first.</p>
+    <div class="demo-wide">
+      <span class="sim">Simulation — runs in your browser, launches nothing</span>
+      <div><a class="btn primary" href="demo.html">Open the interactive demo</a></div>
+    </div>
+  </section>
+
+  <section id="start">
+    <p class="eyebrow">Get started</p>
+    <h2>Clone, set up, open</h2>
+    <p class="lead">macOS (Intel or Apple Silicon) or Linux (x86_64). Setup installs a private .NET SDK and Wine under your home folder — nothing system-wide, no admin.</p>
+<pre><span class="c"># 1 — get CrossWin</span>
+git clone https://github.com/olivierluethy/crosswin.git &amp;&amp; cd crosswin
+
+<span class="c"># 2 — one-time setup (private .NET SDK + Wine, no sudo)</span>
+./crosswin <b>setup</b>
+
+<span class="c"># 3 — open the window in your browser</span>
+./crosswin <b>gui</b></pre>
+    <p class="lead" style="margin-top:20px">Prefer the command line? <code style="font-family:var(--mono);background:var(--card);border:1px solid var(--hairline);padding:2px 7px;border-radius:6px">./crosswin run &lt;folder&gt;</code> does the same without the window. On Apple Silicon, Rosetta 2 is needed once; on Linux, install Wine 9+ and its fonts. CrossWin prints the exact command if anything's missing.</p>
+  </section>
+
+  <footer>
+    <p class="fnote"><b>How CrossWin runs your app.</b> It uses Wine — a compatibility layer that implements the Windows API on macOS and Linux. That is not a Windows virtual machine and not an emulator of Windows; your app's own binaries and the official .NET runtime run on Wine's implementation. Some Windows features behave differently or are missing, which is why CrossWin is explicit about what's supported.</p>
+    <p class="fnote">This page can't run apps itself — GitHub Pages hosts static files, so the demo is a labelled simulation. Real execution needs CrossWin installed on your machine.</p>
+    <p>
+      <a href="https://github.com/olivierluethy/crosswin">Repository</a> ·
+      <a href="https://github.com/olivierluethy/crosswin/blob/main/ARCHITECTURE.md">Architecture</a> ·
+      <a href="https://github.com/olivierluethy/crosswin/blob/main/PROGRESS.md">Progress</a>
+      <br>License: to be selected before distribution — please respect the licenses of all dependencies.
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>
