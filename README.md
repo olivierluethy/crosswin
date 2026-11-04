@@ -40,6 +40,21 @@ Missing Windows fonts (e.g. the icon font `Segoe MDL2 Assets`): copy the `.ttf` 
 
 Known limitations: WPF shows the Windows "Classic" theme for unstyled controls; WebView2/WebBrowser, COM components, Direct3D interop and native third-party DLLs are flagged by `inspect` and likely to fail; .NET Framework apps run on Wine Mono, not Microsoft's .NET Framework. See [ARCHITECTURE.md](ARCHITECTURE.md) for evidence.
 
+### For AI agents (optional): MCP server
+
+CrossWin works without any AI. Agent hosts that support the Model Context Protocol can use the same sessions through
+`./crosswin mcp` (stdio). Tools: `crosswin_inspect`, `crosswin_run`, `crosswin_session`, `crosswin_events`,
+`crosswin_ui`, `crosswin_input`, `crosswin_snap`, `crosswin_stop`. A session started by an agent shows up in
+`./crosswin session` and vice versa.
+
+```bash
+claude mcp add crosswin -- /path/to/crosswin/crosswin mcp      # Claude Code
+```
+
+Other MCP hosts: add a stdio server with command `/path/to/crosswin/crosswin` and args `["mcp"]` (e.g. under
+`"mcpServers"` in the host's JSON config). Hosts without MCP can call the same commands with `--json`.
+Status: implemented, not yet tested with a real host.
+
 ## Mobile apps (Flutter, React Native, Kotlin) — no Android Studio, no Xcode
 
 ```bash

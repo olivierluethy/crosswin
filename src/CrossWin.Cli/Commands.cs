@@ -822,6 +822,33 @@ public static class Commands
         return 0;
     }
 
+    /// <summary>Stops the app of the current session (and with it the `run` process), if still running.</summary>
+    public static int Stop(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) { Console.WriteLine("No session."); return 0; }
+        string session = File.ReadAllText(env.SessionFile).Trim();
+        var info = SessionLog.ReadInfo(session);
+        bool any = false;
+        foreach (string key in new[] { "pid", "runnerPid" })
+        {
+            if (info[key] is not { } node || node.GetValue<int>() == Environment.ProcessId) continue;
+            try
+            {
+                var proc = Process.GetProcessById(node.GetValue<int>());
+                if (proc.HasExited) continue;
+                // The app first: the runner then records app.exit and ends by itself.
+                if (key == "runnerPid" && proc.WaitForExit(5000)) continue;
+                proc.Kill(entireProcessTree: true);
+                any = true;
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+        }
+        if (any) new SessionLog(session).Event("info", "session.stop", "stopped on request");
+        Console.WriteLine(any ? $"Stopped {info["project"]} ({info["id"]})." : "Nothing running.");
+        return 0;
+    }
+
     private static bool Alive(int pid)
     {
         try { return !Process.GetProcessById(pid).HasExited; } catch (ArgumentException) { return false; }

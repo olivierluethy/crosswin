@@ -30,6 +30,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
                                                Structured session events: build errors with file/line,
                                                unhandled exceptions with stack, app output, interactions
           crosswin session [--json]            Target identity (project, revision, runtime), state, counts
+          crosswin stop                        Stop the running app of the current session
+          crosswin mcp                         Optional MCP server (stdio) for AI agent hosts; same sessions
 
           crosswin mobile …                    Mobile apps (Flutter, React Native, Android) without
                                                Android Studio or Xcode — see 'crosswin mobile help'
@@ -51,6 +53,8 @@ try
         "ui" => Commands.Ui(env, args.Skip(1).ToArray()),
         "events" => Commands.Events(env, args.Skip(1).ToArray()),
         "session" => Commands.SessionStatus(env, args.Skip(1).ToArray()),
+        "stop" => Commands.Stop(env),
+        "mcp" => Mcp.Serve(env, repo),
         "input" when args.Length > 1 => Commands.Input(env, args.Skip(1).ToArray()),
         "mobile" => CrossWin.Mobile.MobileCommands.Dispatch(env, args.Skip(1).ToArray()),
         _ => Fail($"Unknown or incomplete command: {string.Join(' ', args)}. Run 'crosswin help'."),

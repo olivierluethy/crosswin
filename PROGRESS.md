@@ -58,7 +58,9 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 ## Current handoff
 **Status:** User-testable milestone. On macOS (Apple Silicon verified) and Linux x86_64 (container verified) `./crosswin run <repo>` builds unmodified modern-.NET WinForms/WPF apps and runs them interactively under Wine; Microsoft's CalculatorDemo and WPFGallery (.NET 10) work. `snap`/`input` give visual inspection and real input.
 
-**Next action on Start:** If the user reported test results, fix those first. Otherwise: optional MCP server adapter over `ui/events/session/input/snap` (#2), then the same event model for mobile sessions; third-party WinForms sample; visual check of WPF `--gpu`.
+**Next action on Start:** If the user reported test results, fix those first. Otherwise: same event model for mobile sessions (`crosswin mobile` → session.json/events.jsonl with logcat/Flutter errors); then a real-host MCP check; third-party WinForms sample; visual check of WPF `--gpu`.
+
+**Unverified (implemented 2026-11-04, user asked not to test):** events-lock fix, WinForms UI tree, occlusion error path, `crosswin mcp`, `crosswin stop`. First acceptance commands: `./crosswin run samples --project HelloWinForms`, `./crosswin ui`, `./crosswin input "click <button text>"`, `./crosswin stop`.
 
 **Agent loop (desktop, 2026-11-04):** `./crosswin run <repo>` → `./crosswin session` → `./crosswin ui` → `./crosswin input "click Save" "expect Saved"` → `./crosswin events --level error` (build errors and unhandled exceptions with file:line in *your* source) → fix → rerun.
 
@@ -126,6 +128,9 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 
 ## Agent-neutral MCP interoperability — #2, #4, #6
 - [ ] Define a small optional MCP **server** adapter over the standalone CrossWin engine; document actual host compatibility, including verifying Grok Bot rather than assuming support.
+  - [x] `crosswin mcp` (src/CrossWin.Cli/Mcp.cs): stdio JSON-RPC, initialize/ping/tools/list/tools/call; 8 tools wrapping the CLI commands (captured output, stdout reserved for protocol); `crosswin_run` starts a separate `crosswin run` and returns at app.ready/build.failed/app.exit; `crosswin stop` added. **Compiled only, not run** (user: no testing this session).
+  - [ ] Verify with a real host (Claude Code `claude mcp add crosswin -- <repo>/crosswin mcp`), then one other host; Grok Bot support unverified.
+  - [ ] Mobile session tools in the same server once mobile sessions write events.jsonl.
 - [ ] Demonstrate one complete agent loop: discover → start/attach session → inspect UI → batch actions → assert state → retrieve diagnostics; same session optionally visible in GUI.
 - [ ] Benchmark action-to-observation latency and setup friction against direct API, avoiding unsupported claims that MCP itself accelerates execution.
 - [ ] Preserve fully functional GUI-only operation; document permissions, session isolation, sensitive logs and alternative local API for hosts without MCP.
