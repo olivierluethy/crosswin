@@ -19,7 +19,8 @@ public static class MobileCommands
           crosswin mobile run <repo> [--device ID] [--phone | --serial S] [--headless] [--release] [--ask-permissions]
                 Build the APK (Flutter, React Native, Expo, Kotlin) and run it on the emulator or phone,
                 shaped like the chosen device.
-                Puts test photos, videos, contacts and files on the device the first time (--no-seed skips).
+                Puts test photos, videos, contacts and files on the emulator the first time (--no-seed skips);
+                a real phone keeps its screen size and data unless you pass --device / --seed.
           crosswin mobile seed [options]       Test data and device state for the running emulator/phone:
                 --photos N         a large library of N photos instead of the ~70 everyday ones
                 --date YYYY-MM-DD  set the device date (e.g. 2026-10-31 for Halloween); --date now restores it
@@ -71,19 +72,32 @@ public static class MobileCommands
                 if (device.Os != MobileOs.Android)
                     throw new CrossWinException($"{device.Name} is an iOS device: use  crosswin mobile preview {Repo()} --devices {device.Id}  (Flutter).");
                 var session = AndroidDiagnostics.StartSession(env, p, device, Flag("--release"));
-                string apk = AndroidBuild.Build(env, sdk, p, Flag("--release"), session);
-                Console.WriteLine($"APK: {apk}");
+                // Target first: its CPU architecture lets Flutter build only what this device needs.
                 var t = AndroidTarget.Acquire(sdk, Opt("--serial"), Flag("--phone"), Flag("--headless"));
-                t.ApplyProfile(device);
+                string apk = AndroidBuild.Build(env, sdk, p, Flag("--release"), session, t.Abi());
+                Console.WriteLine($"APK: {apk}");
+                // A real phone keeps its own screen unless a profile is asked for explicitly; the emulator is
+                // always shaped to the chosen device.
+                bool reshape = t.IsEmulator || Opt("--device") != null;
+                if (reshape) t.ApplyProfile(device);
+                else device = t.NativeProfile();
+                var installClock = System.Diagnostics.Stopwatch.StartNew();
                 var (pkg, act) = t.Install(apk, grantPermissions: !Flag("--ask-permissions"));
+                session.Event("info", "app.install", $"installed {Path.GetFileName(apk)} ({new FileInfo(apk).Length / 1048576.0:0.0} MB) in {installClock.ElapsedMilliseconds} ms",
+                    e => { e["durationMs"] = installClock.ElapsedMilliseconds; e["apkBytes"] = new FileInfo(apk).Length; });
                 var seeder = new AndroidSeeder(env, t);
-                if (!Flag("--no-seed") && !seeder.Seeded)
+                // Test photos/contacts/files go onto emulators by default, onto a real phone only with --seed.
+                bool seed = t.IsEmulator ? !Flag("--no-seed") : Flag("--seed");
+                if (seed && !seeder.Seeded)
                 {
                     Console.WriteLine("Adding test data (photos, videos, contacts, files) ...");
                     seeder.Seed(new AndroidSeeder.Options(Package: pkg));
                 }
+                string cursor = AndroidDiagnostics.DeviceNow(t);
+                var launchClock = System.Diagnostics.Stopwatch.StartNew();
                 t.Launch(pkg, act);
-                AndroidDiagnostics.Launched(session, t, pkg, device);
+                AndroidDiagnostics.Launched(session, t, pkg, device, cursor);
+                session.Event("info", "app.started", $"am start returned after {launchClock.ElapsedMilliseconds} ms", e => e["durationMs"] = launchClock.ElapsedMilliseconds);
                 Save(env, new Session(t.Serial, pkg, act, device.Id));
                 Console.WriteLine($"Running {pkg} on {(t.IsEmulator ? "the emulator" : t.Serial)} as {device.Name} ({device.LogicalSize}).");
                 if (Opt("--snap-after") is { } s && int.TryParse(s, out int secs))
@@ -184,8 +198,9 @@ public static class MobileCommands
             }
             case "stop":
             {
-                var (t, _) = Current(env, sdk);
-                t.Stop();
+                var (t, current) = Current(env, sdk);
+                // A real phone that was never reshaped keeps any display settings of its owner.
+                t.Stop(resetProfile: t.IsEmulator || current.Device != "native");
                 File.Delete(SessionPath(env));
                 if (File.Exists(env.SessionFile) && File.ReadAllText(env.SessionFile).Trim() is var dir
                     && SessionLog.ReadInfo(dir)["kind"]?.ToString() == "android")

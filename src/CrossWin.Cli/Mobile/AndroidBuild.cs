@@ -7,7 +7,7 @@ public static class AndroidBuild
         Path.Combine(env.Home, "work", $"mobile-{p.Name}-{Commands.ShortHash(p.Root)}");
 
     /// <summary>Mirrors the project and builds it; returns the APK path.</summary>
-    public static string Build(HostEnv env, AndroidSdk sdk, MobileProject p, bool release, SessionLog? session = null)
+    public static string Build(HostEnv env, AndroidSdk sdk, MobileProject p, bool release, SessionLog? session = null, string? abi = null)
     {
         if (!p.HasAndroid) throw new CrossWinException($"{p.Name} has no Android target ({string.Join("; ", p.Notes)}).");
         if (sdk.Root == null) throw new CrossWinException("Android SDK missing: run  crosswin mobile setup");
@@ -66,7 +66,14 @@ public static class AndroidBuild
             {
                 string flutter = HostEnv.FindOnPath("flutter")
                     ?? throw new CrossWinException("Flutter SDK not found on PATH. Install it (https://docs.flutter.dev/get-started/install) — Android Studio is not needed.");
-                Check(Run(flutter, new[] { "build", "apk", release ? "--release" : "--debug" }, src), "flutter build apk");
+                var args = new List<string> { "build", "apk", release ? "--release" : "--debug" };
+                // One ABI instead of all four: smaller APK, faster build and install.
+                string? platform = abi switch
+                {
+                    "arm64-v8a" => "android-arm64", "armeabi-v7a" => "android-arm", "x86_64" => "android-x64", _ => null,
+                };
+                if (platform != null) { args.Add("--target-platform"); args.Add(platform); }
+                Check(Run(flutter, args, src), "flutter build apk");
                 return Done(Newest(Path.Combine(src, "build", "app", "outputs", "flutter-apk"), release ? "app-release.apk" : "app-debug.apk"));
             }
             case MobileKind.ReactNative:

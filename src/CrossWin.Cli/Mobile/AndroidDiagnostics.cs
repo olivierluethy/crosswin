@@ -37,17 +37,21 @@ public static partial class AndroidDiagnostics
     }
 
     /// <summary>Records which real target runs the app — emulator vs physical phone is never blurred.</summary>
-    public static void Launched(SessionLog session, AndroidTarget t, string package, MobileDevice device)
+    /// <summary>Device clock (epoch seconds) — take it before launching, the app logs during am start.</summary>
+    public static string DeviceNow(AndroidTarget t) => t.Shell("date", "+%s.%3N").Output.Trim();
+
+    public static void Launched(SessionLog session, AndroidTarget t, string package, MobileDevice device, string cursorBeforeLaunch)
     {
         string Prop(string name) => t.Shell("getprop", name).Output.Trim();
         string pid = t.Shell("pidof", package).Output.Trim();
-        // Cursor = device clock now, so the first ingest starts at this launch, not at old logcat history.
-        string deviceNow = t.Shell("date", "+%s.%3N").Output.Trim();
+        // Cursor = device clock just before the launch, so the first ingest covers startup but no old history.
+        string deviceNow = cursorBeforeLaunch;
         session.SetInfo(o =>
         {
             o["state"] = "running";
             o["package"] = package;
             o["serial"] = t.Serial;
+            o["deviceProfile"] = device.Id;
             o["target"] = new JsonObject
             {
                 ["type"] = t.IsEmulator ? "emulator" : "physical-device",

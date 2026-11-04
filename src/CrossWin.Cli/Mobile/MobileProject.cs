@@ -27,7 +27,11 @@ public sealed record MobileProject(string Root, string Name, MobileKind Kind, bo
 
     public static MobileProject Detect(string path)
     {
-        string root = Commands.SourceRoot(path);
+        // The given folder is the project when it has a project file (apps inside a monorepo); otherwise its
+        // git root (e.g. a path to a subfolder of the app).
+        string full = Path.GetFullPath(path);
+        string[] markers = { "pubspec.yaml", "package.json", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts" };
+        string root = Directory.Exists(full) && markers.Any(m => File.Exists(Path.Combine(full, m))) ? full.TrimEnd('/') : Commands.SourceRoot(path);
         if (!Directory.Exists(root)) throw new CrossWinException($"No such directory: {path}");
         var notes = new List<string>();
         string name = Path.GetFileName(root.TrimEnd('/', '\\'));

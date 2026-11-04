@@ -191,9 +191,9 @@ public sealed class AndroidTarget
         Process.Start(sh)!.WaitForExit();
     }
 
-    public void Stop()
+    public void Stop(bool resetProfile = true)
     {
-        ResetProfile();
+        if (resetProfile) ResetProfile();
         if (IsEmulator) AdbCmd("emu", "kill");
     }
 
@@ -206,6 +206,21 @@ public sealed class AndroidTarget
         Shell("wm", "density", d.Density.ToString());
         Shell("settings", "put", "system", "user_rotation", "0");
         Thread.Sleep(800); // SystemUI relayout
+    }
+
+    /// <summary>Primary CPU ABI, e.g. arm64-v8a.</summary>
+    public string Abi() => Shell("getprop", "ro.product.cpu.abi").Output.Trim();
+
+    /// <summary>The device's own screen as a profile (for real phones, which are not reshaped).</summary>
+    public MobileDevice NativeProfile()
+    {
+        var size = Regex.Match(Shell("wm", "size").Output, @"(Override|Physical) size: (\d+)x(\d+)\s*$", RegexOptions.Multiline);
+        var dens = Regex.Match(Shell("wm", "density").Output, @"(Override|Physical) density: (\d+)\s*$", RegexOptions.Multiline);
+        string model = Shell("getprop", "ro.product.model").Output.Trim();
+        int w = size.Success ? int.Parse(size.Groups[2].Value) : 1080, h = size.Success ? int.Parse(size.Groups[3].Value) : 2400;
+        int d = dens.Success ? int.Parse(dens.Groups[2].Value) : 420;
+        var basis = DeviceCatalog.All.First(x => x.Os == MobileOs.Android);
+        return basis with { Id = "native", Name = model.Length > 0 ? model : Serial, WidthPx = w, HeightPx = h, Density = d };
     }
 
     public void ResetProfile()
@@ -475,6 +490,12 @@ public sealed class AndroidTarget
     public List<string> CrashLines(string package)
     {
         var r = AdbCmd("logcat", "-d", "-b", "crash", "-v", "brief");
-        return r.Output.Split('\n').Where(l => l.Contains(package) || l.Contains("FATAL EXCEPTION")).Take(20).ToList();
+        // Only crashes of this app: a FATAL EXCEPTION header counts when the block names the package.
+        var lines = r.Output.Split('\n');
+        var result = new List<string>();
+        for (int i = 0; i < lines.Length; i++)
+            if (lines[i].Contains("FATAL EXCEPTION") && lines.Skip(i + 1).Take(3).Any(l => l.Contains("Process: " + package + ",")))
+                result.AddRange(lines.Skip(i).Take(12));
+        return result.Take(20).ToList();
     }
 }
