@@ -111,6 +111,38 @@ public sealed partial class SessionLog
     [GeneratedRegex(@"^\s+at (?<frame>.+?)( in (?<file>.+):line (?<line>\d+))?$")]
     private static partial Regex StackFrame();
 
+    /// <summary>Milliseconds since session start for an event observed at <paramref name="at"/> (e.g. a logcat line).</summary>
+    public long MsAt(DateTime at) => (long)(at.ToUniversalTime() - started).TotalMilliseconds;
+
+    // Dart:   lib/main.dart:12:5: Error: Expected ';' after this.
+    [GeneratedRegex(@"^(?<file>[^\s:][^:]*\.dart):(?<line>\d+):(?<col>\d+):\s*Error:\s*(?<msg>.*)$")]
+    private static partial Regex DartDiag();
+    // Kotlin: e: file:///x/MainActivity.kt:42:5 Unresolved reference: foo
+    [GeneratedRegex(@"^e:\s+(file://)?(?<file>/[^:]+\.kts?):(?<line>\d+):(?<col>\d+)\s+(?<msg>.*)$")]
+    private static partial Regex KotlinDiag();
+    // javac:  /x/Main.java:12: error: ';' expected
+    [GeneratedRegex(@"^(?<file>/[^:]+\.java):(?<line>\d+):\s*error:\s*(?<msg>.*)$")]
+    private static partial Regex JavacDiag();
+
+    /// <summary>Compiler errors of mobile toolchains (Flutter/Dart, Kotlin, javac) with source locations.</summary>
+    public void ToolchainLine(string line, Func<string, string> mapPath)
+    {
+        string t = line.Trim();
+        foreach (var (rx, code) in new[] { (DartDiag(), "dart"), (KotlinDiag(), "kotlin"), (JavacDiag(), "javac") })
+        {
+            var m = rx.Match(t);
+            if (!m.Success) continue;
+            Event("error", "build.error", m.Groups["msg"].Value, e =>
+            {
+                e["code"] = code;
+                e["file"] = mapPath(m.Groups["file"].Value);
+                e["line"] = int.Parse(m.Groups["line"].Value);
+                if (m.Groups["col"].Success) e["col"] = int.Parse(m.Groups["col"].Value);
+            });
+            return;
+        }
+    }
+
     public void BuildLine(string line, Func<string, string> mapPath)
     {
         var m = MsBuildDiag().Match(line);

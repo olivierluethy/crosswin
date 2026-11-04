@@ -69,7 +69,8 @@ public static class MobileCommands
                 var device = DeviceCatalog.Resolve(Opt("--device") ?? "pixel-8").Single();
                 if (device.Os != MobileOs.Android)
                     throw new CrossWinException($"{device.Name} is an iOS device: use  crosswin mobile preview {Repo()} --devices {device.Id}  (Flutter).");
-                string apk = AndroidBuild.Build(env, sdk, p, Flag("--release"));
+                var session = AndroidDiagnostics.StartSession(env, p, device, Flag("--release"));
+                string apk = AndroidBuild.Build(env, sdk, p, Flag("--release"), session);
                 Console.WriteLine($"APK: {apk}");
                 var t = AndroidTarget.Acquire(sdk, Opt("--serial"), Flag("--phone"), Flag("--headless"));
                 t.ApplyProfile(device);
@@ -81,6 +82,7 @@ public static class MobileCommands
                     seeder.Seed(new AndroidSeeder.Options(Package: pkg));
                 }
                 t.Launch(pkg, act);
+                AndroidDiagnostics.Launched(session, t, pkg, device);
                 Save(env, new Session(t.Serial, pkg, act, device.Id));
                 Console.WriteLine($"Running {pkg} on {(t.IsEmulator ? "the emulator" : t.Serial)} as {device.Name} ({device.LogicalSize}).");
                 if (Opt("--snap-after") is { } s && int.TryParse(s, out int secs))
@@ -89,6 +91,7 @@ public static class MobileCommands
                     Console.WriteLine("Screenshot: " + Snap(env, t, null));
                 }
                 foreach (string line in t.CrashLines(pkg)) Console.Error.WriteLine("  crash: " + line);
+                Console.WriteLine("Diagnostics: crosswin session · crosswin events --level warn · crosswin mobile ui");
                 return 0;
             }
             case "device" when a.Length > 1:
@@ -139,7 +142,20 @@ public static class MobileCommands
             case "input" when a.Length > 1:
             {
                 var (t, _) = Current(env, sdk);
-                foreach (string cmd in a.Skip(1)) t.Input(cmd);
+                var actions = a.Skip(1).ToList();
+                var results = new List<string>();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    foreach (string cmd in actions) { t.Input(cmd); results.Add("ok: " + cmd); }
+                }
+                catch (CrossWinException ex)
+                {
+                    results.Add("ERROR " + ex.Message.Split('\n')[0]);
+                    AndroidDiagnostics.Interaction(env, actions, results, true, sw.ElapsedMilliseconds);
+                    throw;
+                }
+                AndroidDiagnostics.Interaction(env, actions, results, false, sw.ElapsedMilliseconds);
                 return 0;
             }
             case "stop":
@@ -147,6 +163,14 @@ public static class MobileCommands
                 var (t, _) = Current(env, sdk);
                 t.Stop();
                 File.Delete(SessionPath(env));
+                if (File.Exists(env.SessionFile) && File.ReadAllText(env.SessionFile).Trim() is var dir
+                    && SessionLog.ReadInfo(dir)["kind"]?.ToString() == "android")
+                {
+                    AndroidDiagnostics.Ingest(env, dir); // keep the last logs before the target goes away
+                    var log = new SessionLog(dir);
+                    log.Event("info", "session.stop", "stopped on request");
+                    log.SetInfo(o => { o["state"] = "stopped"; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
+                }
                 Console.WriteLine("Stopped.");
                 return 0;
             }

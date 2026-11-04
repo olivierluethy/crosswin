@@ -399,7 +399,7 @@ public static class Commands
         return p.StartsWith(prefix, StringComparison.Ordinal) ? Path.Combine(sourceRoot, p[prefix.Length..]) : p;
     }
 
-    private static System.Text.Json.Nodes.JsonObject? GitIdentity(string dir)
+    internal static System.Text.Json.Nodes.JsonObject? GitIdentity(string dir)
     {
         var rev = Proc.Run("git", new[] { "-C", dir, "rev-parse", "HEAD" });
         if (rev.ExitCode != 0) return null;
@@ -747,10 +747,13 @@ public static class Commands
         return 0;
     }
 
+    /// <summary>The current session (desktop or mobile); Android sessions pull new logcat lines first.</summary>
     private static string LatestSession(HostEnv env)
     {
-        if (!File.Exists(env.SessionFile)) throw new CrossWinException("No app has been started with  ./crosswin run  yet.");
-        return File.ReadAllText(env.SessionFile).Trim();
+        if (!File.Exists(env.SessionFile)) throw new CrossWinException("No app has been started with  ./crosswin run  or  ./crosswin mobile run  yet.");
+        string dir = File.ReadAllText(env.SessionFile).Trim();
+        CrossWin.Mobile.AndroidDiagnostics.Ingest(env, dir);
+        return dir;
     }
 
     public static int Events(HostEnv env, string[] args)
@@ -792,7 +795,8 @@ public static class Commands
         var events = SessionLog.ReadEvents(session);
         // A runner killed without cleanup leaves state "running": check the process.
         string state = info["state"]?.ToString() ?? "unknown";
-        if (state is "running" or "starting" or "building" && info["runnerPid"] is { } rp && !Alive(rp.GetValue<int>()))
+        // (Desktop only: `mobile run` returns once the app is launched on the device.)
+        if (info["kind"]?.ToString() != "android" && state is "running" or "starting" or "building" && info["runnerPid"] is { } rp && !Alive(rp.GetValue<int>()))
             state = "stopped (runner gone)";
         var errors = events.Where(e => e["level"]?.ToString() == "error").ToList();
         // Prefer the specific cause (build error, exception) over the generic consequence (build.failed, app.exit).
@@ -812,8 +816,17 @@ public static class Commands
         };
         if (args.Contains("--json")) { Console.WriteLine(summary.ToJsonString(new System.Text.Json.JsonSerializerOptions(SessionLog.Json) { WriteIndented = true })); return 0; }
         Console.WriteLine($"session   {info["id"]}  [{state}]");
-        Console.WriteLine($"target    {info["project"]} — {info["ui"]}, {info["targetFramework"]}");
-        Console.WriteLine($"runtime   {info["runtime"]}");
+        if (info["kind"]?.ToString() == "android")
+        {
+            Console.WriteLine($"target    {info["project"]} — {info["projectKind"]}, {info["package"]}, profile {info["deviceProfile"]}");
+            var tg = info["target"];
+            Console.WriteLine($"runtime   {tg?["runtime"] ?? "not launched"}{(tg != null ? $" — {tg["manufacturer"]} {tg["model"]}, Android {tg["android"]} (API {tg["api"]}), {info["serial"]}" : "")}");
+        }
+        else
+        {
+            Console.WriteLine($"target    {info["project"]} — {info["ui"]}, {info["targetFramework"]}");
+            Console.WriteLine($"runtime   {info["runtime"]}");
+        }
         if (info["git"] is { } g) Console.WriteLine($"revision  {g["branch"]} {g["revision"]?.ToString()[..Math.Min(12, g["revision"]!.ToString().Length)]}{(g["dirty"]?.GetValue<bool>() == true ? " (uncommitted changes)" : "")}");
         Console.WriteLine($"events    {events.Count} ({errors.Count} errors, {summary["warnings"]} warnings) — ./crosswin events");
         if (cause is { } le)

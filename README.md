@@ -75,6 +75,8 @@ Status: implemented, not yet tested with a real host.
   Your own files in `~/.crosswin/fixtures/user/` (e.g. photos with faces) are added too.
 - **input / ui / snap**: `input "tap Skip" "scroll down" "type hello"` taps by visible label; `ui` lists labels;
   `snap` saves a screenshot.
+- **session / events** (same commands as for desktop apps): `crosswin events --level warn` shows Android crashes,
+  Flutter errors and layout overflows with file and line, read from the device log when you ask (not yet tested).
 - iOS apps cannot be compiled or simulated off macOS (Apple's SDK and Simulator are macOS-only); the preview's iOS
   behaviour is Flutter's, not Apple's. A Swift/SwiftUI-from-source path is planned.
 

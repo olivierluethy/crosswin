@@ -35,6 +35,10 @@ public static class Mcp
         };
     }
 
+    /// <summary>The current session is an Android run (`crosswin mobile run`): route device tools there.</summary>
+    private static bool Android(HostEnv env) =>
+        File.Exists(env.SessionFile) && SessionLog.ReadInfo(File.ReadAllText(env.SessionFile).Trim())["kind"]?.ToString() == "android";
+
     private static string? Str(JsonObject a, string name) => a[name]?.GetValue<string>();
     private static bool Flag(JsonObject a, string name) => a[name]?.GetValue<bool>() ?? false;
 
@@ -71,19 +75,27 @@ public static class Mcp
             "Semantic UI tree of the running app (role, name, value, toggle state, bounds in client pixels) from WPF automation peers / WinForms accessibility. Prefer this over screenshots.",
             Schema(("all", "boolean", "Include unnamed and off-screen elements", false),
                    ("json", "boolean", "Raw JSON instead of the compact text tree", false)),
-            (env, repo, a) => Capture(() => Commands.Ui(env, new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray()))),
+            (env, repo, a) => Android(env)
+                ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }))
+                : Capture(() => Commands.Ui(env, new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray()))),
         new("crosswin_input",
-            "Send a batch of real mouse/keyboard actions, executed in order; stops at the first failure. Actions: 'click <label>' or 'click X Y', 'type <text>', 'key Enter|Tab|Escape|Up|Down|…', 'wait <ms>', 'expect <text>' (assert an element with that text appears within 3 s).",
+            "Send a batch of real input actions, executed in order; stops at the first failure. Desktop: 'click <label>' or 'click X Y', 'type <text>', 'key Enter|Tab|Escape|Up|Down|…', 'wait <ms>', 'expect <text>' (element with that text appears within 3 s). Android sessions: 'tap <label>|X Y', 'longpress', 'swipe X1 Y1 X2 Y2', 'scroll down|up', 'type', 'key BACK|HOME|ENTER', 'wait', 'wait-for <text>' (expect is mapped to it), 'rotate'.",
             Schema(("actions", "string[]", "Actions, e.g. [\"click Save\", \"expect Saved\"]", true)),
-            (env, repo, a) => Capture(() => Commands.Input(env, a["actions"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray()))),
+            (env, repo, a) =>
+            {
+                var actions = a["actions"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
+                return Android(env)
+                    ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "input" }.Concat(actions.Select(x => x.StartsWith("expect ") ? "wait-for " + x[7..] : x)).ToArray()))
+                    : Capture(() => Commands.Input(env, actions));
+            }),
         new("crosswin_snap",
             "Screenshot the app windows to PNG files (paths returned). Use for visual questions the UI tree cannot answer.",
             Schema(),
-            (env, repo, a) => Capture(() => Commands.Snap(env))),
+            (env, repo, a) => Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" })) : Capture(() => Commands.Snap(env))),
         new("crosswin_stop",
             "Stop the running app of the current session.",
             Schema(),
-            (env, repo, a) => Capture(() => Commands.Stop(env))),
+            (env, repo, a) => Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" })) : Capture(() => Commands.Stop(env))),
     };
 
     public static int Serve(HostEnv env, string repo)

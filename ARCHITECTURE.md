@@ -149,6 +149,10 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
 - Bounds: 5000 events, 2000 chars/message, 1500 UI nodes, 200 chars/value. Redaction: `password|token|secret|api_key…=…`,
   `Bearer/Basic …`, password fields. Correlation is timing-based (`afterInteraction`), labelled as observation.
 - Coordinates everywhere = client-area pixels of the main window (same as snap PNGs and `click X Y`).
+- Android sessions (`crosswin mobile run`) use the same files (`kind: "android"`). The run command exits after launch,
+  so there is no live collector: `events`/`session` pull `adb logcat -d -b main,crash -v epoch -T <cursor>` and classify
+  lines of the app's pids (all pids seen are kept, so restarts still match). Event timestamps are device-log times.
+  Not verified yet (compiled only).
 
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.
