@@ -149,10 +149,18 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
 - Bounds: 5000 events, 2000 chars/message, 1500 UI nodes, 200 chars/value. Redaction: `password|token|secret|api_key…=…`,
   `Bearer/Basic …`, password fields. Correlation is timing-based (`afterInteraction`), labelled as observation.
 - Coordinates everywhere = client-area pixels of the main window (same as snap PNGs and `click X Y`).
-- Android sessions (`crosswin mobile run`) use the same files (`kind: "android"`). The run command exits after launch,
-  so there is no live collector: `events`/`session` pull `adb logcat -d -b main,crash -v epoch -T <cursor>` and classify
-  lines of the app's pids (all pids seen are kept, so restarts still match). Event timestamps are device-log times.
-  Not verified yet (compiled only).
+- Android sessions (`crosswin mobile run`) use the same files (`kind: "android"`). Two ingestion modes:
+  - **Attached (default):** `mobile run` stays in the foreground with an `AndroidLiveCollector` that streams
+    `adb logcat -b main,crash -v epoch -T <cursor>` continuously and, for Flutter, listens on the Dart VM service's
+    Extension stream (`adb forward tcp:0 tcp:PORT` → `ws://127.0.0.1:<host>/<token>/ws` → `streamListen Extension`).
+    `Flutter.Error` (framework errors / layout overflows that never reach logcat, E15) is classified by the same
+    `AndroidDiagnostics.ClassifyFlutter` as logcat and tagged `source:"vm-service"`; `Flutter.Frame` → bounded
+    `perf.jank`/`perf.frames`. The collector writes its pid as `liveCollector` in session.json.
+  - **On-demand:** `--detach` returns right after launch (or when no collector is running); `events`/`session` then
+    pull `adb logcat -d -b main,crash -v epoch -T <cursor>` and classify. `Ingest` skips logcat while a live
+    `liveCollector` pid owns it, so the two modes never double-emit.
+  All pids seen are kept, so restarts still match; event timestamps are device-log times (logcat) or wall time (VM).
+  Implemented, not verified yet (compile-only).
 
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.

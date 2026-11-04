@@ -25,6 +25,10 @@ public sealed class AndroidTarget
     public Proc.Result Shell(params string[] args) => Proc.Run(Adb, new[] { "-s", Serial, "shell" }.Concat(args), _sdk.BuildEnv());
     public Proc.Result AdbCmd(params string[] args) => Proc.Run(Adb, new[] { "-s", Serial }.Concat(args), _sdk.BuildEnv());
 
+    /// <summary>Starts a long-running adb command (e.g. a live <c>logcat</c>) with redirected output, for the live collector.</summary>
+    public Process StreamAdb(params string[] args) =>
+        Process.Start(Proc.Start(Adb, new[] { "-s", Serial }.Concat(args), _sdk.BuildEnv(), null))!;
+
     /// <summary>Connected devices in state "device" (serial, model).</summary>
     public static List<(string Serial, string Model)> Connected(AndroidSdk sdk)
     {

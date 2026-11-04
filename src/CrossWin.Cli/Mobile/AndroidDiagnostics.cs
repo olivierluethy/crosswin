@@ -73,6 +73,8 @@ public static partial class AndroidDiagnostics
     {
         var info = SessionLog.ReadInfo(dir);
         if (info["kind"]?.ToString() != "android" || info["serial"] is not { } serialNode || info["package"] is not { } pkgNode) return;
+        // A live collector (attached `mobile run`) owns logcat while it runs; don't read it twice.
+        if (info["liveCollector"] is { } lc && int.TryParse(lc.ToString(), out int lcPid) && lcPid != Environment.ProcessId && ProcessAlive(lcPid)) return;
         string serial = serialNode.ToString(), package = pkgNode.ToString();
         var session = new SessionLog(dir);
         try
@@ -110,8 +112,14 @@ public static partial class AndroidDiagnostics
         }
     }
 
+    private static bool ProcessAlive(int pid)
+    {
+        try { return !System.Diagnostics.Process.GetProcessById(pid).HasExited; }
+        catch (ArgumentException) { return false; }
+    }
+
     // -T is inclusive: move 1 ms past the last line read.
-    private static string AdvanceCursor(string epoch) =>
+    internal static string AdvanceCursor(string epoch) =>
         (decimal.Parse(epoch, CultureInfo.InvariantCulture) + 0.001m).ToString("0.000", CultureInfo.InvariantCulture);
 
     // 1730700000.123  1234  1250 E Tag     : message
@@ -180,26 +188,8 @@ public static partial class AndroidDiagnostics
                 return;
             }
             // Flutter error block or unhandled Dart exception
-            string text = string.Join('\n', b.Lines);
-            string msg = b.Lines.Select(l => l.Trim().Trim('═', '╡', '╞', ' '))
-                .FirstOrDefault(l => l.Length > 0 && !l.StartsWith("EXCEPTION CAUGHT BY") && !l.StartsWith("The following") && !l.StartsWith("#"))
-                ?? b.Lines.FirstOrDefault() ?? "Flutter error";
-            if (b.Kind == "flutter.unhandled") msg = Regex.Replace(b.Lines[0], @"^.*Unhandled Exception:\s*", "");
-            var overflow = Regex.Match(text, @"A (?<w>\w+) overflowed by (?<px>[\d.]+) pixels on the (?<side>\w+)");
-            var frame = DartFrame().Matches(text).FirstOrDefault(m => !m.Value.Contains("package:flutter/"));
-            var library = Regex.Match(text, @"EXCEPTION CAUGHT BY (?<lib>[A-Z ]+?) ╞");
-            var thrown = Regex.Match(text, @"The following (?<type>[\w<>.]+) was thrown(?<ctx>[^:]*)");
-            string kind = overflow.Success ? "flutter.overflow" : b.Kind;
-            Emit(overflow.Success ? "warn" : "error", kind, overflow.Success ? overflow.Value + "." : msg.Trim(), b.At, e =>
-            {
-                if (thrown.Success) e["type"] = thrown.Groups["type"].Value;
-                if (library.Success) e["library"] = library.Groups["lib"].Value.Trim().ToLowerInvariant();
-                if (thrown.Success && thrown.Groups["ctx"].Value.Trim().Length > 0) e["context"] = thrown.Groups["ctx"].Value.Trim().TrimEnd(':');
-                if (frame != null) { e["file"] = DartSource(root, frame.Groups["uri"].Value); e["line"] = int.Parse(frame.Groups["line"].Value); }
-                var widget = Regex.Match(text, @"The relevant error-causing widget was:\s*\n?\s*(?<w>[\w<>]+)");
-                if (widget.Success) e["widget"] = widget.Groups["w"].Value;
-                e["stack"] = new JsonArray(b.Lines.Where(l => l.TrimStart().StartsWith("#")).Take(15).Select(l => (JsonNode?)l.Trim()).ToArray());
-            });
+            var (level, kind, outMsg, extra) = ClassifyFlutter(b.Lines, b.Kind, root);
+            Emit(level, kind, outMsg, b.At, extra);
         }
 
         foreach (string raw in lines)
@@ -237,6 +227,36 @@ public static partial class AndroidDiagnostics
         }
         Flush();
         return last;
+    }
+
+    /// <summary>
+    /// Classifies a Flutter error block (from logcat's <c>flutter:</c> dump or the Dart VM service's
+    /// <c>Flutter.Error</c> rendered text) into a structured event: level, kind (flutter.error / flutter.overflow /
+    /// flutter.unhandled), a short message and the extra fields (type, library, context, source file:line, widget,
+    /// stack). Shared so logcat and the live VM collector emit identical events.
+    /// </summary>
+    internal static (string Level, string Kind, string Msg, Action<JsonObject> Extra) ClassifyFlutter(IReadOnlyList<string> lines, string blockKind, string root)
+    {
+        string text = string.Join('\n', lines);
+        string msg = lines.Select(l => l.Trim().Trim('═', '╡', '╞', ' '))
+            .FirstOrDefault(l => l.Length > 0 && !l.StartsWith("EXCEPTION CAUGHT BY") && !l.StartsWith("The following") && !l.StartsWith("#"))
+            ?? lines.FirstOrDefault() ?? "Flutter error";
+        if (blockKind == "flutter.unhandled" && lines.Count > 0) msg = Regex.Replace(lines[0], @"^.*Unhandled Exception:\s*", "");
+        var overflow = Regex.Match(text, @"A (?<w>\w+) overflowed by (?<px>[\d.]+) pixels on the (?<side>\w+)");
+        var frame = DartFrame().Matches(text).FirstOrDefault(m => !m.Value.Contains("package:flutter/"));
+        var library = Regex.Match(text, @"EXCEPTION CAUGHT BY (?<lib>[A-Z ]+?) ╞");
+        var thrown = Regex.Match(text, @"The following (?<type>[\w<>.]+) was thrown(?<ctx>[^:]*)");
+        string kind = overflow.Success ? "flutter.overflow" : blockKind;
+        return (overflow.Success ? "warn" : "error", kind, overflow.Success ? overflow.Value + "." : msg.Trim(), e =>
+        {
+            if (thrown.Success) e["type"] = thrown.Groups["type"].Value;
+            if (library.Success) e["library"] = library.Groups["lib"].Value.Trim().ToLowerInvariant();
+            if (thrown.Success && thrown.Groups["ctx"].Value.Trim().Length > 0) e["context"] = thrown.Groups["ctx"].Value.Trim().TrimEnd(':');
+            if (frame != null) { e["file"] = DartSource(root, frame.Groups["uri"].Value); e["line"] = int.Parse(frame.Groups["line"].Value); }
+            var widget = Regex.Match(text, @"The relevant error-causing widget was:\s*\n?\s*(?<w>[\w<>]+)");
+            if (widget.Success) e["widget"] = widget.Groups["w"].Value;
+            e["stack"] = new JsonArray(lines.Where(l => l.TrimStart().StartsWith("#")).Take(15).Select(l => (JsonNode?)l.Trim()).ToArray());
+        });
     }
 
     /// <summary>package:my_app/screens/home.dart → &lt;root&gt;/lib/screens/home.dart</summary>

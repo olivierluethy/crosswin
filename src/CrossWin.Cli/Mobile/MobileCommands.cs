@@ -16,9 +16,11 @@ public static class MobileCommands
           crosswin mobile setup [--phone-only] [--accept-licenses]
                 Android emulator from Google's command-line tools (~2 GB, once), or with --phone-only
                 just adb (~10 MB) for a real phone over USB/Wi-Fi.
-          crosswin mobile run <repo> [--device ID] [--phone | --serial S] [--headless] [--release] [--ask-permissions]
+          crosswin mobile run <repo> [--device ID] [--phone | --serial S] [--headless] [--release] [--ask-permissions] [--detach]
                 Build the APK (Flutter, React Native, Expo, Kotlin) and run it on the emulator or phone,
-                shaped like the chosen device.
+                shaped like the chosen device. Stays attached and streams diagnostics live (logcat, and for
+                Flutter the Dart VM service: framework errors, layout overflows and frame jank); Ctrl-C detaches
+                without closing the app. --detach returns right after launch (diagnostics then pull on demand).
                 Puts test photos, videos, contacts and files on the emulator the first time (--no-seed skips);
                 a real phone keeps its screen size and data unless you pass --device / --seed.
           crosswin mobile seed [options]       Test data and device state for the running emulator/phone:
@@ -107,6 +109,16 @@ public static class MobileCommands
                 }
                 foreach (string line in t.CrashLines(pkg)) Console.Error.WriteLine("  crash: " + line);
                 Console.WriteLine("Diagnostics: crosswin session · crosswin events --level warn · crosswin mobile ui");
+                if (Flag("--detach")) return 0;
+                // Stay attached like desktop `run`: stream logcat + (Flutter) Dart VM-service diagnostics until
+                // the app exits, the device goes away, or the user presses Ctrl-C (which detaches, not kills).
+                Console.WriteLine("Watching live — Ctrl-C to stop watching (the app keeps running).");
+                string[] pids = t.Shell("pidof", pkg).Output.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                using var cts = new CancellationTokenSource();
+                ConsoleCancelEventHandler onCancel = (_, ev) => { ev.Cancel = true; cts.Cancel(); };
+                Console.CancelKeyPress += onCancel;
+                try { new AndroidLiveCollector(t, session, pkg, p.Root, pids, cursor).Run(cts.Token); }
+                finally { Console.CancelKeyPress -= onCancel; }
                 return 0;
             }
             case "device" when a.Length > 1:
