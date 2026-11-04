@@ -75,9 +75,13 @@ public static class Mcp
             "Semantic UI tree of the running app (role, name, value, toggle state, bounds in client pixels) from WPF automation peers / WinForms accessibility. Prefer this over screenshots.",
             Schema(("all", "boolean", "Include unnamed and off-screen elements", false),
                    ("json", "boolean", "Raw JSON instead of the compact text tree", false)),
-            (env, repo, a) => Android(env)
-                ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }))
-                : Capture(() => Commands.Ui(env, new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray()))),
+            (env, repo, a) =>
+            {
+                var flags = new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray();
+                return Android(env)
+                    ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
+                    : Capture(() => Commands.Ui(env, flags));
+            }),
         new("crosswin_input",
             "Send a batch of real input actions, executed in order; stops at the first failure. Desktop: 'click <label>' or 'click X Y', 'type <text>', 'key Enter|Tab|Escape|Up|Down|…', 'wait <ms>', 'expect <text>' (element with that text appears within 3 s). Android sessions: 'tap <label>|X Y', 'longpress', 'swipe X1 Y1 X2 Y2', 'scroll down|up', 'type', 'key BACK|HOME|ENTER', 'wait', 'wait-for <text>' (expect is mapped to it), 'rotate'.",
             Schema(("actions", "string[]", "Actions, e.g. [\"click Save\", \"expect Saved\"]", true)),

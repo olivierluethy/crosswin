@@ -32,7 +32,8 @@ public static class MobileCommands
           crosswin mobile snap [--out FILE]    Screenshot of the running Android app (PNG)
           crosswin mobile input "tap Skip" "tap X Y" "type hello" "key BACK" "scroll down" "wait-for Done"
                                                (tap by visible text/label, or by pixels of the snap image)
-          crosswin mobile ui                   List the labelled elements on screen and where they are
+          crosswin mobile ui [--all] [--json]  The screen's elements (role, text, value, id, position) from the
+                                               accessibility tree; same format as  crosswin ui
           crosswin mobile stop                 Restore the screen size and shut the emulator down
           crosswin mobile devices              List device profiles
           crosswin mobile inspect <repo>       Detect the app type and what can run here
@@ -130,7 +131,30 @@ public static class MobileCommands
             case "ui":
             {
                 var (t, _) = Current(env, sdk);
-                foreach (var e in t.Elements()) Console.WriteLine($"  {e.Label,-50} {e.X},{e.Y}");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var tree = t.Tree();
+                if (Flag("--json")) { Console.WriteLine(tree.ToJsonString(SessionLog.Json)); return 0; }
+                int shown = 0, total = 0;
+                foreach (var n in tree["nodes"]!.AsArray())
+                {
+                    total++;
+                    string name = n!["name"]?.ToString() ?? "";
+                    bool interesting = name.Length > 0 || n["value"] != null || n["toggle"] != null || n["clickable"] != null || n["scrollable"] != null;
+                    if (!Flag("--all") && !interesting) continue;
+                    shown++;
+                    var line = new System.Text.StringBuilder(new string(' ', Math.Min(2 * n["depth"]!.GetValue<int>(), 40)));
+                    line.Append(n["role"]);
+                    if (name.Length > 0) line.Append($" \"{name}\"");
+                    if (n["value"] is { } v) line.Append($" value=\"{v}\"");
+                    if (n["toggle"] is { } tg) line.Append($" [{tg}]");
+                    if (n["id"] is { } id) line.Append($" #{id}");
+                    line.Append($"  @{n["x"]},{n["y"]} {n["w"]}x{n["h"]}");
+                    if (n["enabled"] != null) line.Append(" disabled");
+                    if (n["focused"] != null) line.Append(" focused");
+                    if (n["scrollable"] != null) line.Append(" scrollable");
+                    Console.WriteLine(line.ToString());
+                }
+                Console.WriteLine($"-- android: {shown} of {total} elements in {sw.ElapsedMilliseconds} ms; tap by label: crosswin mobile input \"tap <label>\"");
                 return 0;
             }
             case "snap":

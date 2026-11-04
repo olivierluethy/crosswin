@@ -253,6 +253,53 @@ public sealed class AndroidTarget
         return list;
     }
 
+    /// <summary>
+    /// The accessibility hierarchy as the same node schema as the desktop agent (depth, role, name, id, value,
+    /// toggle, bounds, enabled, focused). Pixels are device pixels (same space as "tap X Y" and snap).
+    /// Password fields are redacted (Android already masks them; the value is dropped anyway).
+    /// </summary>
+    public System.Text.Json.Nodes.JsonObject Tree()
+    {
+        Shell("uiautomator", "dump", "/sdcard/crosswin-ui.xml");
+        string xml = Shell("cat", "/sdcard/crosswin-ui.xml").Output;
+        int start = xml.IndexOf("<?xml", StringComparison.Ordinal) is var i && i >= 0 ? i : xml.IndexOf("<hierarchy", StringComparison.Ordinal);
+        if (start < 0) throw new CrossWinException("uiautomator returned no hierarchy (screen locked or a secure window?): " + xml.Trim().Split('\n')[0]);
+        var doc = System.Xml.Linq.XDocument.Parse(xml[start..]);
+        var nodes = new System.Text.Json.Nodes.JsonArray();
+        void Walk(System.Xml.Linq.XElement e, int depth)
+        {
+            foreach (var child in e.Elements("node"))
+            {
+                string A(string n) => (string?)child.Attribute(n) ?? "";
+                var b = Regex.Match(A("bounds"), @"\[(\d+),(\d+)\]\[(\d+),(\d+)\]");
+                string cls = A("class");
+                string role = cls.Contains('.') ? cls[(cls.LastIndexOf('.') + 1)..] : cls;
+                string text = A("text"), desc = A("content-desc"), rid = A("resource-id");
+                bool password = A("password") == "true";
+                bool editable = role.Contains("EditText");
+                var n = new System.Text.Json.Nodes.JsonObject { ["depth"] = depth, ["role"] = role };
+                n["name"] = editable ? desc : (desc.Length > 0 ? desc : text);
+                if (rid.Length > 0) n["id"] = rid.Contains(":id/") ? rid[(rid.IndexOf(":id/") + 4)..] : rid;
+                if (editable && text.Length > 0) n["value"] = password ? "<redacted>" : (text.Length > 200 ? text[..200] + "…" : text);
+                if (A("checkable") == "true") n["toggle"] = A("checked") == "true" ? "On" : "Off";
+                if (b.Success)
+                {
+                    int x1 = int.Parse(b.Groups[1].Value), y1 = int.Parse(b.Groups[2].Value);
+                    n["x"] = x1; n["y"] = y1; n["w"] = int.Parse(b.Groups[3].Value) - x1; n["h"] = int.Parse(b.Groups[4].Value) - y1;
+                }
+                if (A("enabled") == "false") n["enabled"] = false;
+                if (A("focused") == "true") n["focused"] = true;
+                if (A("clickable") == "true") n["clickable"] = true;
+                if (A("scrollable") == "true") n["scrollable"] = true;
+                if (depth == 0) n["window"] = A("package");
+                nodes.Add(n);
+                Walk(child, depth + 1);
+            }
+        }
+        Walk(doc.Root!, 0);
+        return new System.Text.Json.Nodes.JsonObject { ["framework"] = "android", ["nodes"] = nodes };
+    }
+
     /// <summary>The element labelled <paramref name="text"/> (exact, then first word, prefix, contains; case-insensitive).</summary>
     public (string Label, int X, int Y)? Find(string text)
     {
