@@ -482,10 +482,13 @@ public sealed class AndroidTarget
 
     private Proc.Result? WaitFor(string text)
     {
-        for (int i = 0; i < 30; i++)
+        // Bound by wall clock, not iterations: each Find() does a uiautomator dump (~3.5 s on a real phone), so a
+        // fixed loop count would make "15 s" wildly inaccurate on slow devices.
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < TimeSpan.FromSeconds(15))
         {
             if (Find(text) != null) return null;
-            Thread.Sleep(500);
+            Thread.Sleep(300);
         }
         throw new CrossWinException($"'{text}' did not appear within 15 s.");
     }

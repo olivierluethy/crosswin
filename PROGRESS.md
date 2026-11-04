@@ -104,6 +104,7 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log
+- 2026-11-04: Self-review fixes (no device run): live-collector flush no longer starves under continuous logging (flush on 400 ms quiet **or** 2 s age **or** 200 lines, bounding latency and buffer); collector won't clobber a `stop`-set terminal state; `WaitFor` is wall-clock-bounded (15 s real) instead of 30 iterations (each a ~3.5 s dump on a phone).
 - 2026-11-04: MCP mobile tools: `crosswin_devices` + `crosswin_mobile_run` (spawns an attached `mobile run`, waits for app.launch/build.failed), completing the agent mobile loop over the shared session; `mobile stop` now force-stops the app so an attached collector detaches. Compile-only.
 - 2026-11-04: Flutter live collector (`AndroidLiveCollector`): attached `mobile run` streams logcat + Dart VM-service `Flutter.Error`/`Flutter.Frame` into the shared event model (E15 gap), `--detach` for old behaviour, `liveCollector` ingest-skip, shared `ClassifyFlutter`. Compile-only (0 warnings); not run.
 - 2026-11-04: Agent session/diagnostics API for desktop sessions (E14): semantic UI tree, label clicks, expect assertions, structured events with source mapping, session identity; reproduced + fixed + verified a deliberate WPF crash loop end to end (54 s incl. two builds).

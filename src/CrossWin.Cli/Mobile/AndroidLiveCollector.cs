@@ -27,7 +27,7 @@ public sealed partial class AndroidLiveCollector
     private readonly HashSet<string> _pids;
     private readonly object _gate = new();
     private readonly List<string> _buffer = new();
-    private DateTime _lastAppend = DateTime.MinValue;
+    private DateTime _lastAppend = DateTime.MinValue, _firstPending = DateTime.MinValue;
     private string _cursor;
 
     private volatile bool _vmConnected;
@@ -96,16 +96,23 @@ public sealed partial class AndroidLiveCollector
     private void OnLine(string? line)
     {
         if (line == null) return;
-        lock (_gate) { _buffer.Add(line); _lastAppend = DateTime.UtcNow; }
+        var now = DateTime.UtcNow;
+        lock (_gate) { if (_buffer.Count == 0) _firstPending = now; _buffer.Add(line); _lastAppend = now; }
         if (!_vmConnected && VmServiceUrl().Match(line) is { Success: true } m)
             ConnectVm(m.Groups["port"].Value, m.Groups["token"].Value);
     }
 
-    // Flush once the stream has been quiet briefly, so a multi-line crash/error block is complete before parsing.
+    // Flush once the stream has been quiet briefly (so a multi-line crash/error block is complete), but don't let a
+    // continuously chatty app starve the flush or grow the buffer without bound: also flush on age or size.
     private void MaybeFlush()
     {
         bool ready;
-        lock (_gate) ready = _buffer.Count > 0 && (DateTime.UtcNow - _lastAppend).TotalMilliseconds >= 400;
+        lock (_gate)
+        {
+            var now = DateTime.UtcNow;
+            ready = _buffer.Count > 0 && ((now - _lastAppend).TotalMilliseconds >= 400
+                || (now - _firstPending).TotalMilliseconds >= 2000 || _buffer.Count >= 200);
+        }
         if (ready) FlushNow();
     }
 
