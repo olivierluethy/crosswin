@@ -554,11 +554,13 @@ function openRunPanel(project, attached){
   box.append(panel);
   if(!attached) box.scrollIntoView({behavior:"smooth", block:"nearest"});
 
+  const TERMINAL = ["exited","stopped","error","build-failed","app-not-running","device-disconnected"];
   let lastSeq = 0, firstEvents = true, previewShown = false;
   clearInterval(runPolling);
   runPolling = setInterval(async()=>{
     let s; try{ s = await api("/api/session"); }catch{ return; }
-    if(s && !s.none){
+    const gone = !s || s.none;
+    if(!gone){
       $("#p-state").textContent = stateLabel(s.state, project);
       const bits = [];
       if(s.errors) bits.push(s.errors+" error"+(s.errors>1?"s":""));
@@ -566,14 +568,20 @@ function openRunPanel(project, attached){
       $("#p-sub").textContent = bits.join(" · ");
       if(!(s.state==="building" || s.state==="starting")) $(".spinner")?.remove();
       if(s.state==="running" && !previewShown){ previewShown = true; buildPreview(); refreshPreview(); }
+    }else{
+      $("#p-state").textContent = project+" closed";
+      $(".spinner")?.remove();
     }
-    let ev; try{ ev = await api("/api/events?since="+lastSeq); }catch{ return; }
-    const list = (ev.events||[]);
+    // Pull any remaining events before stopping, so the final errors are shown.
+    let ev; try{ ev = await api("/api/events?since="+lastSeq); }catch{ ev = null; }
+    const list = (ev && ev.events) || [];
     if(list.length){
       if(firstEvents){ $("#events").innerHTML=""; firstEvents=false; }
       for(const e of list){ $("#events").append(eventRow(e)); lastSeq = Math.max(lastSeq, e.seq||0); }
       $("#events").scrollTop = $("#events").scrollHeight;
     }
+    // Stop polling once the app is no longer live — otherwise two fetches fire every 1.2s forever.
+    if(gone || TERMINAL.includes(s.state)){ clearInterval(runPolling); runPolling = null; }
   }, 1200);
 }
 
@@ -591,9 +599,8 @@ function buildPreview(){
   shot.append(el("div","hint","Taking a picture of the app…"));
   box.append(shot);
   const det = el("details","onscreen"); det.id="onscreen";
-  const sum = el("summary",null,"What's on screen");
-  sum.onclick = ()=>{ setTimeout(inspectUi, 0); };
-  det.append(sum);
+  det.append(el("summary",null,"What's on screen"));
+  det.addEventListener("toggle", ()=>{ if(det.open) inspectUi(); }); // only on open, not on collapse
   box.append(det);
 }
 

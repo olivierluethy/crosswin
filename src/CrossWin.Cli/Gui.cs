@@ -17,6 +17,10 @@ namespace CrossWin;
 /// </summary>
 public static class Gui
 {
+    // Requests are handled concurrently on the thread pool, so read-modify-write of shared files is serialized.
+    private static readonly object recentGate = new();
+    private static readonly object setupGate = new();
+
     public static int Serve(HostEnv env, string repo, string[] args)
     {
         int wanted = 0;
@@ -25,7 +29,8 @@ public static class Gui
         {
             switch (args[i])
             {
-                case "--port": wanted = int.Parse(args[++i]); break;
+                case "--port" when i + 1 < args.Length && int.TryParse(args[i + 1], out int pn): wanted = pn; i++; break;
+                case "--port": throw new CrossWinException("--port needs a number, e.g. --port 8899.");
                 case "--no-open": open = false; break;
                 default: throw new CrossWinException($"Unknown option {args[i]} for 'gui'.");
             }
@@ -40,7 +45,9 @@ public static class Gui
         using var stopping = new ManualResetEventSlim(false);
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stopping.Set(); };
 
-        // One request at a time is plenty for a single local user; keep the model simple and predictable.
+        // Accept on one loop, handle each request on the thread pool: snap/ui/setup/run spawn CLI subprocesses
+        // that can take seconds, and must not block the browser's polling or the initial page load. Handlers are
+        // independent (read session files, spawn processes), so concurrent handling is safe.
         _ = Task.Run(() =>
         {
             while (!stopping.IsSet)
@@ -48,8 +55,11 @@ public static class Gui
                 HttpListenerContext ctx;
                 try { ctx = listener.GetContext(); }
                 catch { break; } // listener stopped
-                try { Handle(env, repo, ctx); }
-                catch (Exception ex) { TrySend(ctx, 500, Json(new JsonObject { ["error"] = ex.Message })); }
+                _ = Task.Run(() =>
+                {
+                    try { Handle(env, repo, ctx); }
+                    catch (Exception ex) { TrySend(ctx, 500, Json(new JsonObject { ["error"] = ex.Message })); }
+                });
             }
         });
 
@@ -123,12 +133,16 @@ public static class Gui
         if (!isUrl && !File.Exists(path) && !Directory.Exists(path))
             return new JsonObject { ["error"] = $"There's nothing at \"{path}\". Check the folder path and try again." };
 
-        // 1) Windows desktop apps (the core mission) win when present.
+        // 1) Windows desktop apps (the core mission) win when present. Inspect each project once.
         if (!isUrl)
         {
             var files = ProjectInspector.FindProjects(path);
-            var apps = files.Select(ProjectInspector.Inspect).Where(p => p.IsApp && p.Ui != UiFramework.None).ToList();
-            if (files.Count > 0) return DesktopResult(path, files, apps);
+            if (files.Count > 0)
+            {
+                var infos = files.Select(ProjectInspector.Inspect).ToList();
+                var apps = infos.Where(p => p.IsApp && p.Ui != UiFramework.None).ToList();
+                return DesktopResult(path, infos, apps);
+            }
         }
 
         // 2) Mobile (Flutter / React Native / Android) — pure detection, nothing is built or launched.
@@ -149,13 +163,13 @@ public static class Gui
         }
     }
 
-    private static JsonObject DesktopResult(string path, IReadOnlyList<string> files, List<ProjectInfo> apps)
+    private static JsonObject DesktopResult(string path, IReadOnlyList<ProjectInfo> infos, List<ProjectInfo> apps)
     {
         string baseDir = Directory.Exists(path) ? path : Path.GetDirectoryName(path)!;
         var projects = new JsonArray();
-        foreach (string file in files)
+        foreach (var info in infos)
         {
-            var info = ProjectInspector.Inspect(file);
+            string file = info.Path;
             var a = Assessment.For(info);
             bool runnable = info.IsApp && info.Ui != UiFramework.None && a.Level != SupportLevel.Unsupported;
             var spec = new JsonArray();
@@ -313,20 +327,21 @@ public static class Gui
 
         if (kind is "web" or "android")
         {
-            // web/mobile write a single PNG; ask for a known path and read it back.
+            // web/mobile write a single PNG; ask for a unique path (concurrent snaps must not race on one file).
             string outDir = Path.Combine(env.Home, "gui");
             Directory.CreateDirectory(outDir);
-            string outFile = Path.Combine(outDir, $"preview-{kind}.png");
-            try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
-            var (ex, so, se) = kind == "web"
-                ? RunCli(env, "web", "snap", "--out", outFile)
-                : RunCli(env, "mobile", "snap", "--out", outFile);
-            if (File.Exists(outFile))
+            string outFile = Path.Combine(outDir, $"preview-{kind}-{Guid.NewGuid():N}.png");
+            try
             {
-                try { images.Add(ImageNode(File.ReadAllBytes(outFile), kind == "web" ? "Page" : "Screen", "")); } catch { }
+                var (ex, so, se) = kind == "web"
+                    ? RunCli(env, "web", "snap", "--out", outFile)
+                    : RunCli(env, "mobile", "snap", "--out", outFile);
+                if (File.Exists(outFile))
+                    try { images.Add(ImageNode(File.ReadAllBytes(outFile), kind == "web" ? "Page" : "Screen", "")); } catch { }
+                if (images.Count > 0) return new JsonObject { ["images"] = images };
+                return new JsonObject { ["error"] = CleanCli((so + "\n" + se).Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "No preview available yet.") };
             }
-            if (images.Count > 0) return new JsonObject { ["images"] = images };
-            return new JsonObject { ["error"] = CleanCli((so + "\n" + se).Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "No preview available yet.") };
+            finally { try { if (File.Exists(outFile)) File.Delete(outFile); } catch { } }
         }
 
         // Desktop: snap prints one tab-separated line per window, PNG path first.
@@ -399,21 +414,27 @@ public static class Gui
                 ["error"] = "CrossWin needs Rosetta 2 first (a one-time Apple install). Run this in Terminal, then come back and set up again:",
                 ["manualCommand"] = "softwareupdate --install-rosetta --agree-to-license",
             };
-        if (SetupRunning(env)) return new JsonObject { ["started"] = true };
-
         string wrapper = Path.Combine(repo, "crosswin");
         if (!File.Exists(wrapper)) return new JsonObject { ["error"] = "Could not find the crosswin launcher to run setup." };
 
-        Directory.CreateDirectory(Path.GetDirectoryName(SetupLog(env))!);
-        try { File.WriteAllText(SetupLog(env), ""); } catch { }
-        // Record the child's pid so setup-status can tell when it finishes; keep the log drained via the shell.
-        string script = $"{Sh(wrapper)} setup >> {Sh(SetupLog(env))} 2>&1 & echo $! > {Sh(SetupPid(env))}; wait";
-        var psi = new ProcessStartInfo("/bin/bash") { UseShellExecute = false };
-        psi.ArgumentList.Add("-lc");
-        psi.ArgumentList.Add(script);
-        try { Process.Start(psi); }
-        catch (Exception ex) { return new JsonObject { ["error"] = $"Could not start setup: {ex.Message}" }; }
-        return new JsonObject { ["started"] = true };
+        // Serialize the check-and-spawn so two concurrent requests (two tabs, or two Set-up buttons) can't both
+        // start `crosswin setup` and race on the same Wine prefix.
+        lock (setupGate)
+        {
+            if (SetupRunning(env)) return new JsonObject { ["started"] = true };
+            Directory.CreateDirectory(Path.GetDirectoryName(SetupLog(env))!);
+            try { File.WriteAllText(SetupLog(env), ""); } catch { }
+            // Record the child's pid so setup-status can tell when it finishes; keep the log drained via the shell.
+            string script = $"{Sh(wrapper)} setup >> {Sh(SetupLog(env))} 2>&1 & echo $! > {Sh(SetupPid(env))}; wait";
+            var psi = new ProcessStartInfo("/bin/bash") { UseShellExecute = false };
+            psi.ArgumentList.Add("-lc");
+            psi.ArgumentList.Add(script);
+            try { Process.Start(psi); }
+            catch (Exception ex) { return new JsonObject { ["error"] = $"Could not start setup: {ex.Message}" }; }
+            // Give the child a moment to write its pid, so an immediate second request sees it as running.
+            for (int i = 0; i < 20 && !File.Exists(SetupPid(env)); i++) Thread.Sleep(25);
+            return new JsonObject { ["started"] = true };
+        }
     }
 
     private static bool SetupRunning(HostEnv env)
@@ -570,6 +591,8 @@ public static class Gui
 
     private static JsonArray Recent(HostEnv env)
     {
+        lock (recentGate)
+        {
         string file = Path.Combine(env.Home, "gui", "recent.json");
         if (!File.Exists(file)) return new JsonArray();
         try
@@ -581,10 +604,12 @@ public static class Gui
             return new JsonArray(live);
         }
         catch { return new JsonArray(); }
+        }
     }
 
     private static void Remember(HostEnv env, string path, string? project)
     {
+        lock (recentGate)
         try
         {
             string dir = Path.Combine(env.Home, "gui");
@@ -617,7 +642,7 @@ public static class Gui
             UseShellExecute = false,
         };
         if (dll != null && File.Exists(env.Dotnet)) { psi.ArgumentList.Add(dll); foreach (string a in args) psi.ArgumentList.Add(a); }
-        else { psi.ArgumentList.Add("-lc"); psi.ArgumentList.Add("exec crosswin " + string.Join(' ', args)); }
+        else { psi.ArgumentList.Add("-lc"); psi.ArgumentList.Add("exec crosswin " + string.Join(' ', args.Select(Sh))); }
         try
         {
             using var p = Process.Start(psi)!;
