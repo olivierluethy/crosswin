@@ -238,8 +238,14 @@ public static class MobileCommands
         Line(sdk.SystemImageInstalled, "system image", sdk.SystemImage + (sdk.SystemImageInstalled ? "" : " (missing)"));
         Line(sdk.Root == null ? null : sdk.LicensesAccepted, "licenses", sdk.LicensesAccepted ? "accepted" : "not accepted yet");
         if (sdk.Emulator != null) { string? h = sdk.AccelerationHint(); Line(h == null, "acceleration", h ?? "available"); }
-        var phones = AndroidTarget.Connected(sdk);
-        Line(null, "connected", phones.Count == 0 ? "no device" : string.Join(", ", phones.Select(p => $"{p.Serial} ({p.Model})")));
+        var devices = AndroidTarget.All(sdk);
+        if (devices.Count == 0) Line(null, "connected", "no device (phone: Settings → About phone → tap \"Build number\" 7×, then Developer options → USB debugging, and plug it in)");
+        foreach (var d in devices)
+        {
+            string kind = d.Serial.StartsWith("emulator-") ? "emulator" : "phone";
+            if (d.State == "device") Line(true, kind, $"{d.Serial} ({d.Model}) ready");
+            else Line(false, kind, $"{d.Serial} {d.State}: {AndroidTarget.StateHelp(d.State) ?? "not usable yet"}");
+        }
         return 0;
     }
 

@@ -41,6 +41,37 @@ public sealed class AndroidTarget
         return list;
     }
 
+    /// <summary>Every device adb sees, including ones not usable yet (unauthorized, offline, no permissions).</summary>
+    public static List<(string Serial, string State, string Model)> All(AndroidSdk sdk)
+    {
+        if (sdk.Adb is not { } adb) return new();
+        var r = Proc.Run(adb, new[] { "devices", "-l" }, sdk.BuildEnv());
+        var list = new List<(string, string, string)>();
+        foreach (string line in r.Output.Split('\n').Skip(1))
+        {
+            // "SERIAL  unauthorized usb:1-1 transport_id:3" / "SERIAL  no permissions (user in plugdev group; …)"
+            var m = Regex.Match(line.TrimEnd(), @"^(\S+)\s+(device|unauthorized|offline|authorizing|connecting|recovery|sideload|bootloader|no permissions)\b(.*)$");
+            if (!m.Success) continue;
+            var model = Regex.Match(m.Groups[3].Value, @"model:(\S+)");
+            list.Add((m.Groups[1].Value, m.Groups[2].Value, model.Success ? model.Groups[1].Value.Replace('_', ' ') : "?"));
+        }
+        return list;
+    }
+
+    /// <summary>Plain-language next step for a device that adb sees but cannot use. CrossWin never bypasses the
+    /// phone's trust prompt; the person holding the phone has to allow it.</summary>
+    public static string? StateHelp(string state) => state switch
+    {
+        "unauthorized" => "Unlock the phone and tap \"Allow\" on \"Allow USB debugging?\" (tick \"Always allow from this computer\" to skip it next time). No prompt? Unplug and plug in again, or in Developer options tap \"Revoke USB debugging authorizations\" and reconnect.",
+        "authorizing" or "connecting" => "The phone is still connecting; wait a few seconds and try again.",
+        "offline" => "The phone is connected but not answering. Unplug and plug it in again (use a data cable, not a charge-only cable); if it stays offline, restart adb with  adb kill-server.",
+        "no permissions" => OperatingSystem.IsLinux()
+            ? "Linux does not allow this user to open the phone's USB device. Install the udev rules (Debian/Ubuntu: sudo apt install android-sdk-platform-tools-common), add yourself to the plugdev group, then unplug and plug in again."
+            : "This user may not access the phone over USB; unplug and plug it in again.",
+        "recovery" or "sideload" or "bootloader" => "The phone is in recovery/bootloader mode; restart it normally.",
+        _ => null,
+    };
+
     /// <summary>
     /// --serial wins; "--phone" picks the single connected real device; otherwise the CrossWin emulator
     /// (created and booted when needed).
@@ -51,12 +82,19 @@ public sealed class AndroidTarget
         if (serial != null)
         {
             if (!connected.Any(c => c.Serial == serial))
+            {
+                var known = All(sdk).FirstOrDefault(d => d.Serial == serial);
+                if (known.Serial != null && StateHelp(known.State) is { } help)
+                    throw new CrossWinException($"Device {serial} is {known.State}. {help}");
                 throw new CrossWinException($"Device {serial} is not connected. Connected: {Describe(connected)}");
+            }
             return new AndroidTarget(sdk, serial);
         }
         if (phone)
         {
             var phones = connected.Where(c => !c.Serial.StartsWith("emulator-")).ToList();
+            if (phones.Count == 0 && All(sdk).FirstOrDefault(d => !d.Serial.StartsWith("emulator-") && d.State != "device") is { Serial: not null } waiting)
+                throw new CrossWinException($"Phone {waiting.Serial} is connected but {waiting.State}. {StateHelp(waiting.State) ?? ""}".TrimEnd());
             return phones.Count switch
             {
                 1 => new AndroidTarget(sdk, phones[0].Serial),
