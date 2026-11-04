@@ -81,6 +81,14 @@ public static class Mcp
             "Current session: target identity (project, git revision, runtime), state, error/warning counts, most recent error with file:line.",
             Schema(),
             (env, repo, a) => Capture(() => Commands.SessionStatus(env, new[] { "--json" }))),
+        new("crosswin_sessions",
+            "List every run this machine has recorded (desktop, web, mobile), newest first, with its id, kind, project, liveness-checked state and error/warning counts, and which one is current. Use to discover a session to attach to or report on; read-only (does not change the current session).",
+            Schema(),
+            (env, repo, a) => Capture(() => Commands.Sessions(env, new[] { "--json" }))),
+        new("crosswin_attach",
+            "Make a recorded run the current session, so crosswin_ui/input/snap/stop/events/session act on it. Accepts a full session id or a unique prefix (from crosswin_sessions). Switching the pointer never starts or stops an app. Works for every backend. Note: this moves the single shared pointer, so it is for driving one session at a time, not isolated concurrent sessions.",
+            Schema(("session", "string", "Session id or unique prefix (from crosswin_sessions)", true)),
+            (env, repo, a) => Capture(() => Commands.Attach(env, new[] { Str(a, "session")! }))),
         new("crosswin_compare",
             "Structural diff of two UI snapshots in the shared node schema (each from crosswin_ui json=true, for any backend): an authorized reference vs the current implementation. Reports elements missing from / extra in the implementation and matched elements whose value, toggle or enabled state changed (set geometry=true to also flag bounds moves). Structural/behavioural, not pixel similarity. Each input is a file path or inline JSON.",
             Schema(("reference", "string", "Reference UI snapshot: a file path or inline {\"nodes\":[…]} JSON", true),
@@ -173,7 +181,7 @@ public static class Mcp
                     ["protocolVersion"] = msg["params"]?["protocolVersion"]?.GetValue<string>() ?? ProtocolVersion,
                     ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
                     ["serverInfo"] = new JsonObject { ["name"] = "crosswin", ["version"] = "0.1.0" },
-                    ["instructions"] = "CrossWin runs existing WinForms/WPF desktop apps (under Wine on macOS/Linux) and mobile apps (Flutter/React Native/Kotlin on an emulator or authorized phone). Desktop loop: crosswin_run -> crosswin_ui -> crosswin_input (click by label, expect text) -> crosswin_events level=error -> edit source -> crosswin_run again. Mobile loop: crosswin_devices -> crosswin_mobile_run -> crosswin_ui -> crosswin_input (tap by label) -> crosswin_events level=warn (Flutter framework errors and layout overflows arrive live) -> crosswin_stop. Web loop: crosswin_web_run (URL/.html/dev-server) -> crosswin_ui -> crosswin_input (click by label, type, expect) -> crosswin_events level=warn (console errors, uncaught exceptions with file:line, failed requests) -> crosswin_stop. crosswin_ui/input/snap/stop auto-route to whichever session (desktop, mobile or web) is current. Prefer ui/events over screenshots.",
+                    ["instructions"] = "CrossWin runs existing WinForms/WPF desktop apps (under Wine on macOS/Linux) and mobile apps (Flutter/React Native/Kotlin on an emulator or authorized phone). Desktop loop: crosswin_run -> crosswin_ui -> crosswin_input (click by label, expect text) -> crosswin_events level=error -> edit source -> crosswin_run again. Mobile loop: crosswin_devices -> crosswin_mobile_run -> crosswin_ui -> crosswin_input (tap by label) -> crosswin_events level=warn (Flutter framework errors and layout overflows arrive live) -> crosswin_stop. Web loop: crosswin_web_run (URL/.html/dev-server) -> crosswin_ui -> crosswin_input (click by label, type, expect) -> crosswin_events level=warn (console errors, uncaught exceptions with file:line, failed requests) -> crosswin_stop. crosswin_ui/input/snap/stop auto-route to whichever session (desktop, mobile or web) is current. To work with an earlier run, crosswin_sessions lists all recorded runs and crosswin_attach makes one current. Prefer ui/events over screenshots.",
                 });
             case "ping":
                 return Result(id, new JsonObject());
