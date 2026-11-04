@@ -207,7 +207,9 @@ crosswin gui [--port N] [--no-open]
     POST /api/run      {path,project,runKind} → spawns the existing attached runner for that backend via the
                        ./crosswin wrapper in the background (run | web run | mobile run; bash -lc … >> gui-run.log);
                        it writes the shared session files. Only runKind=desktop requires Wine setup.
-    GET  /api/session  reads the current session.json (state, counts) — the GUI polls this while an app runs.
+    GET  /api/session  reads the current session.json (state, counts) — the GUI polls this while an app runs and
+                       reattaches to a live one on open (never restarting it). A running/starting/building state whose
+                       runnerPid is dead is reported "stopped" (liveness guard), so the GUI never latches a dead session.
     GET  /api/events   reads events.jsonl (?since=&level=) — build errors/exceptions with file:line in the panel.
     POST /api/snap     runs the backend's snapshot (desktop `snap` / `web snap --out` / `mobile snap --out`,
                        picked by the session kind), returns each window PNG inline as a data URI → the GUI's

@@ -244,6 +244,16 @@ async function init(){
   await loadHost();
   await loadRecent();
   $("#form").addEventListener("submit", e=>{ e.preventDefault(); check(); });
+  resumeSession();
+}
+
+// Opening the window must never restart a running app — if one is already running
+// (started here earlier or from the command line), reattach to it and show its panel.
+async function resumeSession(){
+  let s; try{ s = await api("/api/session"); }catch{ return; }
+  if(s && !s.none && ["building","starting","running"].includes(s.state)){
+    openRunPanel(s.project || "your app", true);
+  }
 }
 
 async function loadHost(){
@@ -522,13 +532,13 @@ async function runApp(project, runKind, device, show){
   openRunPanel(project);
 }
 
-function openRunPanel(project){
+function openRunPanel(project, attached){
   const box = $("#run");
   box.innerHTML = "";
   const panel = el("div","panel");
   const top = el("div","p-top");
   top.append(el("div","spinner"));
-  const st = el("div","p-state","Starting "+project+"…"); st.id="p-state";
+  const st = el("div","p-state", attached ? (project+" is running") : ("Starting "+project+"…")); st.id="p-state";
   top.append(st);
   const sub = el("div","p-sub",""); sub.id="p-sub"; top.append(sub);
   const stop = el("button","btn ghost","Stop"); stop.style.marginLeft="12px";
@@ -539,10 +549,10 @@ function openRunPanel(project){
   panel.append(preview);
 
   const evbox = el("div","events"); evbox.id="events";
-  evbox.append(el("div","empty","Building and launching — this can take a minute the first time."));
+  evbox.append(el("div","empty", attached ? "Reading the running app…" : "Building and launching — this can take a minute the first time."));
   panel.append(evbox);
   box.append(panel);
-  box.scrollIntoView({behavior:"smooth", block:"nearest"});
+  if(!attached) box.scrollIntoView({behavior:"smooth", block:"nearest"});
 
   let lastSeq = 0, firstEvents = true, previewShown = false;
   clearInterval(runPolling);

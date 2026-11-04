@@ -351,6 +351,11 @@ public static class Gui
         ["dataUri"] = "data:image/png;base64," + Convert.ToBase64String(png),
     };
 
+    private static bool Alive(int pid)
+    {
+        try { return !Process.GetProcessById(pid).HasExited; } catch (ArgumentException) { return false; }
+    }
+
     private static string SessionKind(HostEnv env)
     {
         try
@@ -479,12 +484,18 @@ public static class Gui
         var events = SessionLog.ReadEvents(dir);
         int errors = events.Count(e => e["level"]?.ToString() == "error");
         int warns = events.Count(e => e["level"]?.ToString() == "warn");
+        // A runner killed without cleanup (e.g. the terminal's Ctrl-C) can leave state "running": verify the pid,
+        // so the GUI never reattaches to a dead session. Android has no runnerPid (device-tracked), so skip it.
+        string state = info["state"]?.ToString() ?? "unknown";
+        if (info["kind"]?.ToString() != "android" && state is "running" or "starting" or "building"
+            && info["runnerPid"] is { } rp && int.TryParse(rp.ToString(), out int pid) && !Alive(pid))
+            state = "stopped";
         return new JsonObject
         {
             ["id"] = info["id"]?.DeepClone() ?? Path.GetFileName(dir),
             ["project"] = info["project"]?.DeepClone(),
             ["kind"] = info["kind"]?.DeepClone(),
-            ["state"] = info["state"]?.DeepClone(),
+            ["state"] = state,
             ["ui"] = info["ui"]?.DeepClone(),
             ["runtime"] = info["runtime"]?.DeepClone(),
             ["support"] = info["support"]?.DeepClone(),
