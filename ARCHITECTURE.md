@@ -120,11 +120,35 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
     `{"clicks":1,"note":"hallo Linux"}`; TourneyMaster (net472 WPF) renders its full UI. macOS: both build and run
     (process alive, no err lines) — not visually verified (no capture path for Mono apps).
   - Wine Mono WinExe processes print nothing to the terminal, so readiness markers via Console do not work there.
+- **E14 agent session API, desktop** (2026-11-04, macOS arm64, HelloWpf + a scratch copy with a deliberate bug):
+  - `ui`: WPF AutomationPeers read in-process (reflection, `Dispatcher.Invoke` with 5 s timeout) → role/name/automation
+    id/value/toggle/bounds in snap/click pixel space; 9 nodes in 0.27–0.7 s. Password fields → `<redacted>`.
+  - `input "click Click me"` resolves the label to the button centre; `expect "Clicks: 2"` polls the tree (3 s) and fails
+    the batch; non-zero exit on failure.
+  - `events`: `CS1002` reported as `build.error` with file:line mapped from the work copy to the user's tree; an
+    unhandled `InvalidOperationException` from a click → `exception.unhandled` with type, message (secret redacted),
+    20 frames, top user frame file:line. Warm restart: agent ready 0.4 s, window 2.5 s (cold: 12–13 s).
+  - Crash → fix → verify loop including two builds/launches: 54 s, no screenshots.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
   and WPF-software on both drivers; PrintWindow + child composition is the fallback. Images are the client area and
   share the coordinate system of `input "click X Y"`. WPF `--gpu` content is not captured by either method.
+
+## Agent session / diagnostics model (issue #2)
+```
+~/.crosswin/session/<id>/session.json   identity: project, projectFile, sourceRoot, git{revision,branch,dirty}, ui, TFM,
+                                         runtime (labelled "compatibility layer"), host, support, risks, state, pids
+                          events.jsonl  {seq,t,ms,level,kind,msg,+file,line,col,code,type,stack,afterInteraction,…}
+                                         kinds: session.start build.start/ok/failed/error app.launch/ready/output/exit
+                                         exception.unhandled wine.<channel> (err deduplicated, fixme counted)
+                                         interaction.batch capture.snap session.truncated
+                          app.log, build.log (raw evidence, unchanged)
+```
+- Writers: the `run` process and every `ui/input/snap` call; cross-process exclusive file lock, seq from line count.
+- Bounds: 5000 events, 2000 chars/message, 1500 UI nodes, 200 chars/value. Redaction: `password|token|secret|api_key…=…`,
+  `Bearer/Basic …`, password fields. Correlation is timing-based (`afterInteraction`), labelled as observation.
+- Coordinates everywhere = client-area pixels of the main window (same as snap PNGs and `click X Y`).
 
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.

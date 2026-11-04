@@ -21,6 +21,15 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           crosswin input "click X Y" "wait MS" "type TEXT" "key Enter|Tab|Escape|Down|..."
                                                Send real mouse/keyboard input to the running app
                                                (X/Y = pixels in the snap image of the window client area)
+                                               "click <label>" clicks a control by its visible text,
+                                               "expect <text>" asserts it appears (3 s); a batch stops at
+                                               the first failure
+          crosswin ui [--all] [--json]         Semantic UI tree (role, name, value, bounds) from WPF
+                                               automation peers / WinForms accessibility — no screenshot
+          crosswin events [--level warn|error] [--kind K] [--since SEQ] [--last N] [--json]
+                                               Structured session events: build errors with file/line,
+                                               unhandled exceptions with stack, app output, interactions
+          crosswin session [--json]            Target identity (project, revision, runtime), state, counts
 
           crosswin mobile …                    Mobile apps (Flutter, React Native, Android) without
                                                Android Studio or Xcode — see 'crosswin mobile help'
@@ -39,6 +48,9 @@ try
         "inspect" when args.Length > 1 => Commands.Inspect(env, args[1]),
         "run" when args.Length > 1 => Commands.Run(env, repo, args[1], args.Skip(2).ToArray()),
         "snap" => Commands.Snap(env),
+        "ui" => Commands.Ui(env, args.Skip(1).ToArray()),
+        "events" => Commands.Events(env, args.Skip(1).ToArray()),
+        "session" => Commands.SessionStatus(env, args.Skip(1).ToArray()),
         "input" when args.Length > 1 => Commands.Input(env, args.Skip(1).ToArray()),
         "mobile" => CrossWin.Mobile.MobileCommands.Dispatch(env, args.Skip(1).ToArray()),
         _ => Fail($"Unknown or incomplete command: {string.Join(' ', args)}. Run 'crosswin help'."),

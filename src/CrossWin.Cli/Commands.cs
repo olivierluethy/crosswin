@@ -317,6 +317,30 @@ public static class Commands
         if (netFramework && NetFramework.FindMono(env) == null)
             throw new CrossWinException("This is a .NET Framework app and Wine Mono is not installed. Run  ./crosswin setup  first.");
 
+        var session = SessionLog.Create(env, info.Name);
+        string MapPath(string p) => MapToSource(p, src, sourceRoot);
+        var git = GitIdentity(sourceRoot);
+        session.SetInfo(o =>
+        {
+            o["id"] = Path.GetFileName(session.Dir);
+            o["kind"] = "desktop";
+            o["project"] = info.Name;
+            o["projectFile"] = info.Path;
+            o["sourceRoot"] = sourceRoot;
+            o["git"] = git;
+            o["ui"] = info.Ui.ToString();
+            o["targetFramework"] = info.ChosenTfm;
+            o["runtime"] = netFramework ? $"Wine Mono on {env.WineVersion} (compatibility layer)" : $".NET self-contained {rid} on {env.WineVersion} (compatibility layer)";
+            o["host"] = $"{env.OsDescription} ({env.Arch})";
+            o["wpfRendering"] = info.Ui is UiFramework.Wpf or UiFramework.Both ? (gpu ? "gpu" : "software") : null;
+            o["support"] = assessment.Level.ToString();
+            o["risks"] = new System.Text.Json.Nodes.JsonArray(info.Findings.Select(f => (System.Text.Json.Nodes.JsonNode?)f).ToArray());
+            o["state"] = noBuild ? "starting" : "building";
+            o["runnerPid"] = Environment.ProcessId;
+            o["startedAt"] = DateTime.UtcNow.ToString("O");
+        });
+        session.Event("info", "session.start", $"{info.Name} ({info.Ui}, {info.ChosenTfm}) at {git?["revision"]?.ToString() ?? "no git"}");
+
         if (!noBuild)
         {
             Console.WriteLine($"==> Copying sources to isolated work dir {src}");
@@ -338,15 +362,15 @@ public static class Commands
                     Console.WriteLine("    warning: app prefers 32-bit but this Wine has no 32-bit support; running it as 64-bit (AnyCPU). Native 32-bit DLLs would fail; install wine32 to keep 32-bit.");
                 }
                 Console.WriteLine($"==> Building .NET Framework app ({tfm}) with the .NET SDK — log: {log}");
-                if (!Build(env, command.ToArray(), output, log))
-                    return 3;
+                if (!Build(env, command.ToArray(), output, log, session, MapPath))
+                    return BuildFailed(session);
             }
             else
             {
                 Console.WriteLine($"==> Building {rid} self-contained ({info.ChosenTfm}) — log: {log}");
                 if (!Build(env, new[] { "publish", projectCopy, "-c", "Debug", "-f", info.ChosenTfm!, "-r", rid, "--self-contained", "true",
-                        "-p:PublishSingleFile=false", "-p:PublishTrimmed=false" }, output, log))
-                    return 3;
+                        "-p:PublishSingleFile=false", "-p:PublishTrimmed=false" }, output, log, session, MapPath))
+                    return BuildFailed(session);
             }
         }
 
@@ -356,7 +380,37 @@ public static class Commands
         SetWpfRendering(env, gpu);
         EnsureFontReplacements(env);
         SyncUserFonts(env);
-        return Launch(env, info, exe, appArgs, snapAfter, gpu);
+        return Launch(env, info, exe, appArgs, snapAfter, gpu, session, MapPath);
+    }
+
+    private static int BuildFailed(SessionLog session)
+    {
+        session.SetInfo(o => { o["state"] = "build-failed"; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
+        Console.Error.WriteLine("Structured errors (file/line in your source): ./crosswin events --level error");
+        return 3;
+    }
+
+    /// <summary>Maps a path in the isolated work copy (host or Wine Z: form) back to the user's source tree.</summary>
+    internal static string MapToSource(string path, string workSrc, string sourceRoot)
+    {
+        string p = path.Trim();
+        if (p.StartsWith(@"Z:", StringComparison.OrdinalIgnoreCase)) p = p[2..].Replace('\\', '/');
+        string prefix = workSrc.TrimEnd('/') + "/";
+        return p.StartsWith(prefix, StringComparison.Ordinal) ? Path.Combine(sourceRoot, p[prefix.Length..]) : p;
+    }
+
+    private static System.Text.Json.Nodes.JsonObject? GitIdentity(string dir)
+    {
+        var rev = Proc.Run("git", new[] { "-C", dir, "rev-parse", "HEAD" });
+        if (rev.ExitCode != 0) return null;
+        var status = Proc.Run("git", new[] { "-C", dir, "status", "--porcelain" });
+        var branch = Proc.Run("git", new[] { "-C", dir, "rev-parse", "--abbrev-ref", "HEAD" });
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["revision"] = rev.Output.Trim(),
+            ["branch"] = branch.Output.Trim(),
+            ["dirty"] = status.ExitCode == 0 && status.Output.Trim().Length > 0,
+        };
     }
 
     /// <summary>
@@ -446,8 +500,10 @@ public static class Commands
         }
     }
 
-    private static bool Build(HostEnv env, string[] command, string output, string logPath)
+    private static bool Build(HostEnv env, string[] command, string output, string logPath, SessionLog session, Func<string, string> mapPath)
     {
+        var sw = Stopwatch.StartNew();
+        session.Event("info", "build.start", "dotnet " + command[0]);
         using var log = new StreamWriter(logPath);
         var errors = new List<string>();
         int warnings = 0;
@@ -455,10 +511,14 @@ public static class Commands
         int code = Proc.Stream(env.Dotnet, command.Concat(new[] { "-p:EnableWindowsTargeting=true", "-o", output, "-nologo" }), line =>
         {
             log.WriteLine(line);
+            session.BuildLine(line, mapPath);
             if (line.Contains(": error ")) { if (!errors.Contains(line.Trim())) errors.Add(line.Trim()); }
             else if (line.Contains(": warning ")) warnings++;
             else if (line.TrimStart().StartsWith("Restored ") || line.Contains(" -> ")) Console.WriteLine("    " + line.Trim());
         }, buildEnv);
+        session.Event(code == 0 ? "info" : "error", code == 0 ? "build.ok" : "build.failed",
+            code == 0 ? $"build succeeded in {sw.Elapsed.TotalSeconds:0.0}s" : $"build failed (exit {code}) after {sw.Elapsed.TotalSeconds:0.0}s; full log: {logPath}",
+            e => { e["durationMs"] = sw.ElapsedMilliseconds; e["warnings"] = warnings; });
         if (code == 0)
         {
             if (warnings > 0) Console.WriteLine($"    ({warnings} warning lines, see build.log)");
@@ -488,11 +548,9 @@ public static class Commands
         return File.Exists(byName) ? byName : null;
     }
 
-    private static int Launch(HostEnv env, ProjectInfo info, string exe, List<string> appArgs, int? snapAfter, bool gpu)
+    private static int Launch(HostEnv env, ProjectInfo info, string exe, List<string> appArgs, int? snapAfter, bool gpu, SessionLog slog, Func<string, string> mapPath)
     {
-        string session = Path.Combine(env.Home, "session", DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + info.Name);
-        Directory.CreateDirectory(session);
-        File.WriteAllText(env.SessionFile, session);
+        string session = slog.Dir;
         string appLog = Path.Combine(session, "app.log");
 
         var wineEnv = env.WineEnv();
@@ -513,6 +571,8 @@ public static class Commands
         var psi = Proc.Start(env.Wine!, new[] { exe }.Concat(appArgs), wineEnv, Path.GetDirectoryName(exe));
         var stopwatch = Stopwatch.StartNew();
         using var p = Process.Start(psi)!;
+        slog.SetInfo(o => { o["state"] = "starting"; o["pid"] = p.Id; o["exe"] = exe; });
+        slog.Event("info", "app.launch", $"launched {Path.GetFileName(exe)} under {env.WineVersion}", e => e["pid"] = p.Id);
         using var log = new StreamWriter(appLog) { AutoFlush = true };
         var crash = new StringBuilder();
         bool inCrash = false;
@@ -522,6 +582,7 @@ public static class Commands
             lock (log)
             {
                 log.WriteLine(line);
+                slog.AppLine(line, mapPath);
                 if (!inCrash && line.Contains("Unhandled exception."))
                 {
                     inCrash = true;
@@ -545,12 +606,15 @@ public static class Commands
             try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
         };
 
+        if (!agent) slog.SetInfo(o => o["state"] = "running");
         if (agent)
         {
             _ = Task.Run(() =>
             {
                 if (!WaitFor(Path.Combine(session, "agent.ready"), TimeSpan.FromSeconds(120), p)) return;
                 Console.WriteLine($"==> .NET runtime started in Wine after {stopwatch.Elapsed.TotalSeconds:0.0}s (agent attached)");
+                slog.SetInfo(o => o["state"] = "running");
+                slog.Event("info", "app.ready", "agent attached; ui/snap/input available", e => e["startupMs"] = stopwatch.ElapsedMilliseconds);
                 if (snapAfter is { } s)
                 {
                     Thread.Sleep(TimeSpan.FromSeconds(s));
@@ -560,6 +624,13 @@ public static class Commands
         }
 
         p.WaitForExit();
+        lock (log) slog.Finish(p.ExitCode, mapPath);
+        // 130/137/143 = ended by Ctrl+C / kill / SIGTERM (user or agent stopped it), not an app failure.
+        bool signalled = p.ExitCode is 130 or 137 or 143;
+        slog.Event(p.ExitCode == 0 || signalled ? "info" : "error", "app.exit",
+            $"exit code {p.ExitCode}{(signalled ? " (stopped by signal)" : "")} after {stopwatch.Elapsed.TotalSeconds:0.0}s",
+            e => { e["exitCode"] = p.ExitCode; e["crashed"] = crash.Length > 0; });
+        slog.SetInfo(o => { o["state"] = crash.Length > 0 ? "crashed" : "exited"; o["exitCode"] = p.ExitCode; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
         Console.WriteLine($"==> App exited with code {p.ExitCode} after {stopwatch.Elapsed.TotalSeconds:0.0}s. Log: {appLog}");
         if (crash.Length > 0)
         {
@@ -578,8 +649,15 @@ public static class Commands
     public static int Snap(HostEnv env)
     {
         string session = CurrentSession(env);
+        var sw = Stopwatch.StartNew();
         var lines = RecaptureX11(env, RequestAgent(session, "snap", "", null));
         foreach (string line in lines) Console.WriteLine(line);
+        new SessionLog(session).Event(lines.Any(l => l.StartsWith("ERROR")) ? "warn" : "info", "capture.snap",
+            $"{lines.Count(l => l.Contains(".png"))} image(s)", e =>
+            {
+                e["durationMs"] = sw.ElapsedMilliseconds;
+                e["files"] = new System.Text.Json.Nodes.JsonArray(lines.Where(l => !l.StartsWith("ERROR")).Select(l => (System.Text.Json.Nodes.JsonNode?)l.Split('\t')[0]).ToArray());
+            });
         return lines.Count > 0 && !lines[0].StartsWith("ERROR") ? 0 : 1;
     }
 
@@ -616,9 +694,137 @@ public static class Commands
     public static int Input(HostEnv env, string[] commands)
     {
         string session = CurrentSession(env);
+        var sw = Stopwatch.StartNew();
         var lines = RequestAgent(session, "input", string.Join('\n', commands), null);
         foreach (string line in lines) Console.WriteLine(line);
-        return lines.Any(l => l.StartsWith("ERROR")) ? 1 : 0;
+        bool failed = lines.Any(l => l.StartsWith("ERROR"));
+        // Interaction history: what was sent, what the agent resolved, how long it took (typed text is redacted).
+        new SessionLog(session).Event(failed ? "warn" : "info", "interaction.batch", $"{commands.Length} action(s){(failed ? ", failed" : "")}", e =>
+        {
+            e["durationMs"] = sw.ElapsedMilliseconds;
+            e["actions"] = new System.Text.Json.Nodes.JsonArray(commands.Select(c => (System.Text.Json.Nodes.JsonNode?)SessionLog.Redact(c)).ToArray());
+            e["results"] = new System.Text.Json.Nodes.JsonArray(lines.Select(l => (System.Text.Json.Nodes.JsonNode?)SessionLog.Redact(l)).ToArray());
+        });
+        return failed ? 1 : 0;
+    }
+
+    // ----------------------------------------------------- ui / events / session (agent-facing, issue #2)
+
+    public static int Ui(HostEnv env, string[] args)
+    {
+        string session = CurrentSession(env);
+        var sw = Stopwatch.StartNew();
+        var lines = RequestAgent(session, "ui", "", null);
+        string body = string.Join("\n", lines);
+        if (lines.Count == 0 || body.StartsWith("ERROR")) { Console.Error.WriteLine(body.Length > 0 ? body : "ERROR empty answer"); return 1; }
+        if (args.Contains("--json")) { Console.WriteLine(body); return 0; }
+        var tree = System.Text.Json.Nodes.JsonNode.Parse(body)!;
+        bool all = args.Contains("--all");
+        int shown = 0, total = 0;
+        foreach (var n in tree["nodes"]!.AsArray())
+        {
+            total++;
+            string role = n!["role"]!.ToString(), name = n["name"]?.ToString() ?? "";
+            string? value = n["value"]?.ToString(), id = n["id"]?.ToString(), toggle = n["toggle"]?.ToString();
+            bool offscreen = n["offscreen"] != null;
+            // Compact default view: skip unnamed layout nodes and off-screen ones (use --all to see them).
+            if (!all && (offscreen || (name.Length == 0 && value == null && id == null && n["depth"]!.GetValue<int>() > 0))) continue;
+            shown++;
+            var sb = new StringBuilder(new string(' ', 2 * n["depth"]!.GetValue<int>()));
+            sb.Append(role);
+            if (name.Length > 0) sb.Append($" \"{name}\"");
+            if (value != null) sb.Append($" value=\"{value}\"");
+            if (toggle != null) sb.Append($" [{toggle}]");
+            if (id != null) sb.Append($" #{id}");
+            sb.Append($"  @{n["x"]},{n["y"]} {n["w"]}x{n["h"]}");
+            if (n["enabled"] != null) sb.Append(" disabled");
+            if (n["focused"] != null) sb.Append(" focused");
+            if (offscreen) sb.Append(" offscreen");
+            if (n["window"] is { } w && w.ToString() != name) sb.Append($"  (window \"{w}\")");
+            Console.WriteLine(sb.ToString());
+        }
+        Console.WriteLine($"-- {tree["framework"]}: {shown} of {total} elements in {sw.ElapsedMilliseconds} ms; click by label: ./crosswin input \"click <label>\"");
+        return 0;
+    }
+
+    private static string LatestSession(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) throw new CrossWinException("No app has been started with  ./crosswin run  yet.");
+        return File.ReadAllText(env.SessionFile).Trim();
+    }
+
+    public static int Events(HostEnv env, string[] args)
+    {
+        string session = LatestSession(env);
+        string? Opt(string name) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
+        int minRank = SessionLog.LevelRank(Opt("--level") ?? "info");
+        long since = long.TryParse(Opt("--since"), out long sn) ? sn : 0;
+        int last = int.TryParse(Opt("--last"), out int ln) ? ln : 50;
+        string? kind = Opt("--kind");
+        var events = SessionLog.ReadEvents(session)
+            .Where(e => SessionLog.LevelRank(e["level"]?.ToString()) >= minRank)
+            .Where(e => e["seq"]!.GetValue<int>() > since)
+            .Where(e => kind == null || e["kind"]!.ToString().StartsWith(kind))
+            .ToList();
+        events = events.Skip(Math.Max(0, events.Count - last)).ToList();
+        if (args.Contains("--json"))
+        {
+            foreach (var e in events) Console.WriteLine(e.ToJsonString(SessionLog.Json));
+            return 0;
+        }
+        foreach (var e in events)
+        {
+            string loc = e["file"] is { } f ? $"  {f}:{e["line"]}" : "";
+            string code = e["code"] is { } c ? $"{c}: " : e["type"] is { } ty ? $"{ty}: " : "";
+            string after = e["afterInteraction"] is { } ai ? $"  (after interaction #{ai})" : "";
+            Console.WriteLine($"#{e["seq"],-4} {e["ms"],7}ms {e["level"],-5} {e["kind"],-20} {code}{e["msg"]}{loc}{after}");
+            if (e["stack"] is System.Text.Json.Nodes.JsonArray st)
+                foreach (var fr in st.Take(5)) Console.WriteLine($"{"",36}at {fr}");
+        }
+        if (events.Count == 0) Console.WriteLine("(no matching events)");
+        return 0;
+    }
+
+    public static int SessionStatus(HostEnv env, string[] args)
+    {
+        string session = LatestSession(env);
+        var info = SessionLog.ReadInfo(session);
+        var events = SessionLog.ReadEvents(session);
+        // A runner killed without cleanup leaves state "running": check the process.
+        string state = info["state"]?.ToString() ?? "unknown";
+        if (state is "running" or "starting" or "building" && info["runnerPid"] is { } rp && !Alive(rp.GetValue<int>()))
+            state = "stopped (runner gone)";
+        var errors = events.Where(e => e["level"]?.ToString() == "error").ToList();
+        // Prefer the specific cause (build error, exception) over the generic consequence (build.failed, app.exit).
+        var cause = errors.LastOrDefault(e => e["kind"]?.ToString() is not ("app.exit" or "build.failed")) ?? errors.LastOrDefault();
+        var summary = new System.Text.Json.Nodes.JsonObject
+        {
+            ["session"] = info.DeepClone(),
+            ["state"] = state,
+            ["dir"] = session,
+            ["agentAttached"] = File.Exists(Path.Combine(session, "agent.ready")) && state == "running",
+            ["events"] = events.Count,
+            ["errors"] = errors.Count,
+            ["warnings"] = events.Count(e => e["level"]?.ToString() == "warn"),
+            ["lastError"] = cause?.DeepClone(),
+            ["lastSeq"] = events.LastOrDefault()?["seq"]?.GetValue<int>() ?? 0,
+            ["logs"] = new System.Text.Json.Nodes.JsonArray(new[] { "app.log", "events.jsonl" }.Select(f => (System.Text.Json.Nodes.JsonNode?)Path.Combine(session, f)).ToArray()),
+        };
+        if (args.Contains("--json")) { Console.WriteLine(summary.ToJsonString(new System.Text.Json.JsonSerializerOptions(SessionLog.Json) { WriteIndented = true })); return 0; }
+        Console.WriteLine($"session   {info["id"]}  [{state}]");
+        Console.WriteLine($"target    {info["project"]} — {info["ui"]}, {info["targetFramework"]}");
+        Console.WriteLine($"runtime   {info["runtime"]}");
+        if (info["git"] is { } g) Console.WriteLine($"revision  {g["branch"]} {g["revision"]?.ToString()[..Math.Min(12, g["revision"]!.ToString().Length)]}{(g["dirty"]?.GetValue<bool>() == true ? " (uncommitted changes)" : "")}");
+        Console.WriteLine($"events    {events.Count} ({errors.Count} errors, {summary["warnings"]} warnings) — ./crosswin events");
+        if (cause is { } le)
+            Console.WriteLine($"last err  {le["kind"]}: {le["msg"]}{(le["file"] is { } f ? $"  ({f}:{le["line"]})" : "")}");
+        Console.WriteLine($"dir       {session}");
+        return 0;
+    }
+
+    private static bool Alive(int pid)
+    {
+        try { return !Process.GetProcessById(pid).HasExited; } catch (ArgumentException) { return false; }
     }
 
     private static string CurrentSession(HostEnv env)

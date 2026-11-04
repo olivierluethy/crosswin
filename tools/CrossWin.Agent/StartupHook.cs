@@ -7,6 +7,9 @@
 //   CrossWin writes  input.request   -> lines "click <x> <y>" (client-area pixels, as in snap PNGs) or
 //                                       "type <text>", injected with SendInput,
 //                                       "key <Enter|Tab|Escape|Down|...>" or "wait <ms>"; then input.done
+//                                       "click <label>" clicks the centre of the best-matching UI element,
+//                                       "expect <text>" fails unless such an element appears within 3 s
+//   CrossWin writes  ui.request      -> agent writes the semantic UI tree as JSON (see UiTree.cs) to ui.done
 //   agent writes     agent.ready     once the hook is running
 using System;
 using System.Collections.Generic;
@@ -35,6 +38,7 @@ internal class StartupHook
             Thread.Sleep(200);
             Handle(dir, "snap", _ => Snap.CaptureAll(dir));
             Handle(dir, "input", Input.Run);
+            Handle(dir, "ui", UiTree.Dump);
         }
     }
 
@@ -233,6 +237,32 @@ internal static class Input
     [DllImport("user32.dll")] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
+
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+
+    /// <summary>SendInput acts on the screen: make sure the point belongs to this app (not another window on
+    /// top, e.g. a second instance), raising our window once; otherwise describe the occluding window.</summary>
+    private static string? Occluded(IntPtr main, int x, int y)
+    {
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            IntPtr hit = WindowFromPoint(new POINT { X = x, Y = y });
+            IntPtr root = hit == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hit, 2 /* GA_ROOT */);
+            GetWindowThreadProcessId(root, out uint pid);
+            if (pid == (uint)Environment.ProcessId) return null;
+            if (attempt == 0) { SetForegroundWindow(main); BringWindowToTop(main); Thread.Sleep(200); continue; }
+            var title = new StringBuilder(256);
+            GetWindowText(root, title, title.Capacity);
+            return root == IntPtr.Zero ? "no window at that point (outside the app?)"
+                : $"covered by another window \"{title}\" (process {pid}); close other instances or move it";
+        }
+        return null;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT { public uint type; public UNION u; }
@@ -255,9 +285,11 @@ internal static class Input
     public static string Run(string script)
     {
         Trace("input: find window");
+        // The agent attaches before the first window is shown: wait for it instead of failing.
         var (hwnd, left, top) = Snap.MainWindow();
+        for (int i = 0; hwnd == IntPtr.Zero && i < 50; i++) { Thread.Sleep(200); (hwnd, left, top) = Snap.MainWindow(); }
         Trace($"input: window {hwnd} at {left},{top}");
-        if (hwnd == IntPtr.Zero) return "ERROR no visible window";
+        if (hwnd == IntPtr.Zero) return "ERROR no visible window after 10 s";
         SetForegroundWindow(hwnd);
         Trace("input: foreground set");
         Thread.Sleep(150);
@@ -265,16 +297,39 @@ internal static class Input
         foreach (string raw in script.Split('\n'))
         {
             string line = raw.TrimEnd('\r');
+            if (line.StartsWith("expect "))
+            {
+                string want = line.Substring(7);
+                var hit = UiTree.WaitFor(want, 3000);
+                if (hit == null) { log.AppendLine($"ERROR expect: no element matching \"{want}\" within 3 s"); break; }
+                log.AppendLine($"ok: {line}  ({hit.Role} \"{hit.Name}\" at {hit.X},{hit.Y})");
+                continue;
+            }
             if (line.StartsWith("click "))
             {
                 string[] p = line.Split(' ');
-                int x = left + int.Parse(p[1]), y = top + int.Parse(p[2]);
+                int cx, cy;
+                string note = "";
+                if (p.Length == 3 && int.TryParse(p[1], out cx) && int.TryParse(p[2], out cy)) { }
+                else
+                {
+                    string label = line.Substring(6).Trim().Trim('"');
+                    var hit = UiTree.Find(UiTree.Read().Nodes, label);
+                    if (hit == null) { log.AppendLine($"ERROR click: no element labelled \"{label}\" (see: crosswin ui)"); break; }
+                    cx = hit.CenterX; cy = hit.CenterY;
+                    note = $"  -> {hit.Role} \"{hit.Name}\" at {cx},{cy}" + (hit.Enabled ? "" : " [disabled]");
+                }
+                int x = left + cx, y = top + cy;
+                if (Occluded(hwnd, x, y) is { } why) { log.AppendLine($"ERROR click {cx},{cy}: {why}"); break; }
                 Trace($"click: SetCursorPos {x},{y}");
                 SetCursorPos(x, y);
                 Trace("click: cursor set");
                 Thread.Sleep(50);
                 Send(Mouse(MOUSEEVENTF_LEFTDOWN), Mouse(MOUSEEVENTF_LEFTUP));
                 Trace("click: sent");
+                Thread.Sleep(150);
+                log.AppendLine("ok: " + line + note);
+                continue;
             }
             else if (line.StartsWith("key "))
             {

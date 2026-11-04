@@ -30,7 +30,11 @@ This is the single source of truth for ongoing work. Update it during implementa
 North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requirements: [#2](https://github.com/olivierluethy/crosswin/issues/2) diagnostics, adapters, hot reload, sessions; [#3](https://github.com/olivierluethy/crosswin/issues/3) screenshot/video; [#4](https://github.com/olivierluethy/crosswin/issues/4) zero-config onboarding; [#5](https://github.com/olivierluethy/crosswin/issues/5) desktop UX, device rotation, traces. Inspect each issue before implementation.
 
 - [ ] Reconcile existing code, commits, verified capabilities and #2–#6. Preserve checked WPF/WinForms items; identify next feasible working slice. (#6)
-- [ ] Implement a shared, privacy-aware agent session/diagnostics API with structured errors, bounded logs, target identity, UI tree and interaction history; verify with one actual backend. (#2, #5, #6)
+- [x] Implement a shared, privacy-aware agent session/diagnostics API with structured errors, bounded logs, target identity, UI tree and interaction history; verify with one actual backend. (#2, #5, #6) — desktop backend, E14. `crosswin ui | events | session`, `input "click <label>" "expect <text>"`.
+  - [ ] Re-verify after the last fix (events-file lock reentrancy crashed the runner when an exception followed an interaction; fixed, compiled, **not re-run** — user asked to stop testing).
+  - [ ] WinForms UI tree (AccessibilityObject path) implemented, **not verified**; .NET Framework/Mono apps have no agent → no `ui`.
+  - [ ] Occlusion check (click point covered by another window) implemented; one run passed after raising the window, the "covered" error path not observed.
+  - [ ] Same event model for `crosswin mobile` sessions (Android logcat, Flutter errors).
 - [ ] Web adapter: launch/attach to React/Next/Vite or generic local web server, stream console/network/DOM/accessibility diagnostics and user interaction traces; reproduce and verify a real failure without manually writing Playwright tests. (#6)
 - [ ] Android Real Device Bridge: discover USB-connected device via ADB, show authorized/offline/unauthorized state; guide developer options, USB debugging and trust prompts without bypassing permissions. Install/launch an app, read logcat and UI hierarchy, execute fast batched gestures, correlate events to errors. (#2, #6)
 - [ ] Virtual-to-real continuity: replay supported test steps on an authorized physical device and compare errors, media behavior and latency. Do not promise process-state transfer. (#6)
@@ -54,7 +58,9 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 ## Current handoff
 **Status:** User-testable milestone. On macOS (Apple Silicon verified) and Linux x86_64 (container verified) `./crosswin run <repo>` builds unmodified modern-.NET WinForms/WPF apps and runs them interactively under Wine; Microsoft's CalculatorDemo and WPFGallery (.NET 10) work. `snap`/`input` give visual inspection and real input.
 
-**Next action on Start:** If the user reported test results, fix those first. Otherwise: third-party WinForms sample; visual check of WPF `--gpu`; icon-font gap; then .NET Framework 4.x investigation (Wine Mono).
+**Next action on Start:** If the user reported test results, fix those first. Otherwise: optional MCP server adapter over `ui/events/session/input/snap` (#2), then the same event model for mobile sessions; third-party WinForms sample; visual check of WPF `--gpu`.
+
+**Agent loop (desktop, 2026-11-04):** `./crosswin run <repo>` → `./crosswin session` → `./crosswin ui` → `./crosswin input "click Save" "expect Saved"` → `./crosswin events --level error` (build errors and unhandled exceptions with file:line in *your* source) → fix → rerun.
 
 **Blockers:** None. GPU-rendered WPF needs a visual check by a human (agent capture only sees GDI/software content).
 
@@ -82,9 +88,13 @@ North star: [#6](https://github.com/olivierluethy/crosswin/issues/6). Requiremen
 - **Own test-script errors (3x)** — zsh `set --` without word splitting; `||` + `&` launch construct; wait-loop pattern `crosswin:` matching "crosswin: building CLI". Each produced misleading "failures". Use bash scripts and precise end markers.
 - **User font not visible to WPF** — copy only: not listed; registry entry under CurrentVersion\Fonts fixes it (E9).
 - **One `run` exited with 143 after 0.3 s** right after `wine reg delete`/`pkill`; immediate retry fine. Unexplained, watch for recurrence.
+- **Fix-verify run clicked the wrong instance** — the previous app instance was still running and its window sat exactly over the new one; SendInput is screen-level. Fix: agent checks `WindowFromPoint` belongs to its own process (raises once, else errors "covered by another window").
+- **First input right after `app.ready` → "no visible window"** — agent attaches before the first window exists. Fix: input waits up to 10 s for a window.
+- **Runner died without exception/exit events** — `LastInteraction` read events.jsonl while `Event()` held it with FileShare.None → IOException in the output handler killed the process. Fix: read before locking; `Event()` never throws. Not re-run yet.
 - **WinForms: 2 quick clicks counted once** — double-click semantics, same as Windows. Added `wait <ms>` input command.
 
 ## Work log
+- 2026-11-04: Agent session/diagnostics API for desktop sessions (E14): semantic UI tree, label clicks, expect assertions, structured events with source mapping, session identity; reproduced + fixed + verified a deliberate WPF crash loop end to end (54 s incl. two builds).
 - 2026-11-03: .NET Framework support in `crosswin run`; samples/LegacyWinForms (old csproj, packages.config, Prefer32Bit, resx); Linux test script tests/linux/netfx.sh.
 - 2026-11-03: Fresh-home check (`CROSSWIN_HOME=<empty dir> ./crosswin setup`): SDK 10 + Wine download/verify + prefix + agent in 2:31 min; HelloWpf run + 2 clicks + snap correct.
 - 2026-11-02: Initial mission, autonomous workflow and handoff checklist established. Compared SwissHacks monorepo agent guidance; added Superpowers routing and debugging escalation.

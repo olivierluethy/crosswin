@@ -27,6 +27,10 @@ Other commands:
 | `./crosswin run <repo> --snap-after 3` | Run and save a PNG of the app windows after 3 s |
 | `./crosswin snap` | Screenshot the running app |
 | `./crosswin input "click 76 88" "wait 700" "type hello" "key Enter"` | Real mouse/keyboard input; X/Y are pixels in the `snap` image; `key` sends Enter, Tab, Escape, arrows, … |
+| `./crosswin ui` | The app's controls as a tree (role, text, value, position) — read from WPF/WinForms accessibility, no screenshot |
+| `./crosswin input "click Save" "expect Saved"` | Click a control by its visible text; `expect` checks that a text appears (batch stops at the first failure) |
+| `./crosswin events --level error` | Build errors and crashes with file and line in your source; also app output and the actions sent (`--json` for tools) |
+| `./crosswin session` | What is running: project, git revision, runtime, state, error count |
 
 **.NET Framework 4.x apps** (old-style `.csproj`, `packages.config`) work through the same `./crosswin run`. In the isolated copy CrossWin translates each old project file into an equivalent SDK-style one (same files, references, resources, NuGet packages), builds the real `net4x` `.exe` with the .NET SDK and runs it on [Wine Mono](https://gitlab.winehq.org/mono/wine-mono), Wine's open-source .NET Framework. Limits: Wine Mono's WPF is incomplete, `snap`/`input` are not available for these apps, COM references and custom MSBuild imports are skipped (with a warning). If Wine has no 32-bit support, apps that merely *prefer* 32-bit run as 64-bit; `x86`-only apps need `wine32`.
 
