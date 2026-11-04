@@ -178,9 +178,15 @@ crosswin web run <url | file.html | dir>
                      target + kill browser/dev server), inspect. Reconnect info (cdpUrl, targetId, pids) in session.json
                      + ~/.crosswin/web/session.json, so snap/stop re-attach from a separate process.
 ```
+  Web/WebPage.cs      interaction: `web ui` is one Runtime.evaluate returning a compact DOM/accessibility tree in the
+                     shared node schema; `web input` does real CDP input (Input.dispatchMouseEvent / insertText /
+                     dispatchKeyEvent — not element.click()), click by label (scroll into view + centre) or pixels,
+                     type, key, scroll, expect/wait-for. Interactions recorded as interaction.batch.
+```
 No Node or Playwright is needed to *drive* the browser (CDP is spoken directly); a dev server still needs the app's own
-Node toolchain, while a .html file or a static folder runs with no server. Interaction (ui/input via the accessibility
-tree) and MCP tools are slice 2. Implemented, not verified yet (compile-only).
+Node toolchain, while a .html file or a static folder runs with no server. MCP exposes `crosswin_web_run`, and
+`crosswin_ui/input/snap/stop` route to desktop, mobile or web by the current session's kind — the same agent loop across
+all three backends. Implemented, not verified yet (compile-only).
 
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.

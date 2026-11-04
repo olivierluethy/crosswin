@@ -35,9 +35,13 @@ public static class Mcp
         };
     }
 
+    private static string? SessionKind(HostEnv env) =>
+        File.Exists(env.SessionFile) ? SessionLog.ReadInfo(File.ReadAllText(env.SessionFile).Trim())["kind"]?.ToString() : null;
+
     /// <summary>The current session is an Android run (`crosswin mobile run`): route device tools there.</summary>
-    private static bool Android(HostEnv env) =>
-        File.Exists(env.SessionFile) && SessionLog.ReadInfo(File.ReadAllText(env.SessionFile).Trim())["kind"]?.ToString() == "android";
+    private static bool Android(HostEnv env) => SessionKind(env) == "android";
+    /// <summary>The current session is a web run (`crosswin web run`): route ui/input/snap/stop there.</summary>
+    private static bool Web(HostEnv env) => SessionKind(env) == "web";
 
     private static string? Str(JsonObject a, string name) => a[name]?.GetValue<string>();
     private static bool Flag(JsonObject a, string name) => a[name]?.GetValue<bool>() ?? false;
@@ -67,6 +71,12 @@ public static class Mcp
                    ("release", "boolean", "Build a release APK instead of debug", false),
                    ("headless", "boolean", "Boot the emulator without a window", false)),
             (env, repo, a) => StartMobileRun(env, a)),
+        new("crosswin_web_run",
+            "Open a local web app in a real browser (Chrome DevTools Protocol) and stream its console messages, uncaught exceptions (with source file:line) and failed/4xx-5xx network requests into the same session. The target is a URL, an .html file, a static folder, or a web project directory (its dev server is started). Returns once the page is attached. Then use crosswin_ui / crosswin_input (click by label, type, expect) / crosswin_events / crosswin_snap, and crosswin_stop to close it.",
+            Schema(("path", "string", "URL, .html file, static folder, or web project directory", true),
+                   ("url", "string", "Attach to this URL instead of detecting/starting a dev server", false),
+                   ("show", "boolean", "Open a visible browser window instead of headless", false)),
+            (env, repo, a) => StartWebRun(env, a)),
         new("crosswin_session",
             "Current session: target identity (project, git revision, runtime), state, error/warning counts, most recent error with file:line.",
             Schema(),
@@ -91,8 +101,8 @@ public static class Mcp
             (env, repo, a) =>
             {
                 var flags = new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray();
-                return Android(env)
-                    ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
+                return Web(env) ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
+                    : Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
                     : Capture(() => Commands.Ui(env, flags));
             }),
         new("crosswin_input",
@@ -101,18 +111,22 @@ public static class Mcp
             (env, repo, a) =>
             {
                 var actions = a["actions"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
-                return Android(env)
-                    ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "input" }.Concat(actions.Select(x => x.StartsWith("expect ") ? "wait-for " + x[7..] : x)).ToArray()))
+                return Web(env) ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "input" }.Concat(actions).ToArray()))
+                    : Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "input" }.Concat(actions.Select(x => x.StartsWith("expect ") ? "wait-for " + x[7..] : x)).ToArray()))
                     : Capture(() => Commands.Input(env, actions));
             }),
         new("crosswin_snap",
             "Screenshot the app windows to PNG files (paths returned). Use for visual questions the UI tree cannot answer.",
             Schema(),
-            (env, repo, a) => Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" })) : Capture(() => Commands.Snap(env))),
+            (env, repo, a) => Web(env) ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "snap" }))
+                : Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" }))
+                : Capture(() => Commands.Snap(env))),
         new("crosswin_stop",
             "Stop the running app of the current session.",
             Schema(),
-            (env, repo, a) => Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" })) : Capture(() => Commands.Stop(env))),
+            (env, repo, a) => Web(env) ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "stop" }))
+                : Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" }))
+                : Capture(() => Commands.Stop(env))),
     };
 
     public static int Serve(HostEnv env, string repo)
@@ -147,7 +161,7 @@ public static class Mcp
                     ["protocolVersion"] = msg["params"]?["protocolVersion"]?.GetValue<string>() ?? ProtocolVersion,
                     ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
                     ["serverInfo"] = new JsonObject { ["name"] = "crosswin", ["version"] = "0.1.0" },
-                    ["instructions"] = "CrossWin runs existing WinForms/WPF desktop apps (under Wine on macOS/Linux) and mobile apps (Flutter/React Native/Kotlin on an emulator or authorized phone). Desktop loop: crosswin_run -> crosswin_ui -> crosswin_input (click by label, expect text) -> crosswin_events level=error -> edit source -> crosswin_run again. Mobile loop: crosswin_devices -> crosswin_mobile_run -> crosswin_ui -> crosswin_input (tap by label) -> crosswin_events level=warn (Flutter framework errors and layout overflows arrive live) -> crosswin_stop. crosswin_ui/input/snap/stop auto-route to whichever session (desktop or mobile) is current. Prefer ui/events over screenshots.",
+                    ["instructions"] = "CrossWin runs existing WinForms/WPF desktop apps (under Wine on macOS/Linux) and mobile apps (Flutter/React Native/Kotlin on an emulator or authorized phone). Desktop loop: crosswin_run -> crosswin_ui -> crosswin_input (click by label, expect text) -> crosswin_events level=error -> edit source -> crosswin_run again. Mobile loop: crosswin_devices -> crosswin_mobile_run -> crosswin_ui -> crosswin_input (tap by label) -> crosswin_events level=warn (Flutter framework errors and layout overflows arrive live) -> crosswin_stop. Web loop: crosswin_web_run (URL/.html/dev-server) -> crosswin_ui -> crosswin_input (click by label, type, expect) -> crosswin_events level=warn (console errors, uncaught exceptions with file:line, failed requests) -> crosswin_stop. crosswin_ui/input/snap/stop auto-route to whichever session (desktop, mobile or web) is current. Prefer ui/events over screenshots.",
                 });
             case "ping":
                 return Result(id, new JsonObject());
@@ -302,6 +316,52 @@ public static class Mcp
         bool launched = session != null && SessionLog.ReadEvents(session).Any(e => e["kind"]?.ToString() == "app.launch");
         string tail = string.Join('\n', log.Split('\n').TakeLast(25));
         return (launched ? 0 : 1, $"{status}\n\n-- crosswin mobile run output (last lines) --\n{tail}");
+    }
+
+    /// <summary>
+    /// `web run` stays attached (it streams diagnostics in the foreground), so start it as a separate crosswin
+    /// process that keeps feeding the session, and return once the page has attached (app.ready) or it failed.
+    /// </summary>
+    private static (int, string) StartWebRun(HostEnv env, JsonObject a)
+    {
+        if (Web(env)) Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "stop" })); // clear a previous web session
+        string before = File.Exists(env.SessionFile) ? File.ReadAllText(env.SessionFile).Trim() : "";
+        var args = new List<string> { "web", "run", Str(a, "path")! };
+        if (Str(a, "url") is { } url) { args.Add("--url"); args.Add(url); }
+        if (Flag(a, "show")) args.Add("--show");
+        var psi = SelfInvocation(args);
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        var output = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+
+        var sw = Stopwatch.StartNew();
+        string? session = null;
+        while (sw.Elapsed < TimeSpan.FromMinutes(3))
+        {
+            Thread.Sleep(200);
+            if (session == null && File.Exists(env.SessionFile))
+            {
+                string now = File.ReadAllText(env.SessionFile).Trim();
+                if (now != before) session = now;
+            }
+            if (session != null)
+            {
+                var kinds = SessionLog.ReadEvents(session).Select(e => e["kind"]?.ToString()).ToHashSet();
+                if (kinds.Contains("app.ready") || kinds.Contains("app.exit")) break;
+            }
+            if (p.HasExited) break;
+        }
+        string log;
+        lock (output) log = output.ToString();
+        var (_, status) = Capture(() => Commands.SessionStatus(env, new[] { "--json" }));
+        bool ready = session != null && SessionLog.ReadEvents(session).Any(e => e["kind"]?.ToString() == "app.ready");
+        string tail = string.Join('\n', log.Split('\n').TakeLast(25));
+        return (ready ? 0 : 1, $"{status}\n\n-- crosswin web run output (last lines) --\n{tail}");
     }
 
     private static ProcessStartInfo SelfInvocation(IEnumerable<string> args)

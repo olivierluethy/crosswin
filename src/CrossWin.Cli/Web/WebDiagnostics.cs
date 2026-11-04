@@ -39,6 +39,20 @@ public sealed partial class WebDiagnostics
         return s;
     }
 
+    /// <summary>Records a batch of web interactions with per-action results (typed text redacted), like the other backends.</summary>
+    public static void Interaction(HostEnv env, IReadOnlyList<string> actions, IReadOnlyList<string> results, bool failed, long ms)
+    {
+        if (!File.Exists(env.SessionFile)) return;
+        string dir = File.ReadAllText(env.SessionFile).Trim();
+        if (SessionLog.ReadInfo(dir)["kind"]?.ToString() != "web") return;
+        new SessionLog(dir).Event(failed ? "warn" : "info", "interaction.batch", $"{actions.Count} action(s){(failed ? ", failed" : "")}", e =>
+        {
+            e["durationMs"] = ms;
+            e["actions"] = new JsonArray(actions.Select(x => (JsonNode?)SessionLog.Redact(x)).ToArray());
+            e["results"] = new JsonArray(results.Select(r => (JsonNode?)SessionLog.Redact(r)).ToArray());
+        });
+    }
+
     /// <summary>http://localhost:PORT/src/App.tsx → &lt;root&gt;/src/App.tsx when that file exists (best effort).</summary>
     private string MapUrl(string url)
     {

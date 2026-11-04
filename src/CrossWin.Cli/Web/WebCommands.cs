@@ -20,6 +20,10 @@ public static class WebCommands
                 (with source file:line) and failed network requests into the session. --show opens a visible
                 window instead. A directory with package.json starts its dev server; a .html file or a folder
                 with index.html runs with no server. --url skips server detection and attaches to a URL.
+          crosswin web ui [--all] [--json]   The page's elements (role, text, value, position) from the DOM /
+                                             accessibility tree; same format as  crosswin ui
+          crosswin web input "click Save" "click X Y" "type hello" "key Enter" "scroll down" "expect Saved"
+                                             Real input (CDP mouse/key events); click by visible label or pixels
           crosswin web snap [--out FILE]     Screenshot the page (PNG) via the running browser
           crosswin web stop                  Close the page and the browser (and any dev server crosswin started)
           crosswin web inspect <target>      What crosswin would run and whether a browser / Node are available
@@ -38,6 +42,8 @@ public static class WebCommands
         {
             case "inspect": return Inspect(Target());
             case "run": return Run(env, Target(), Flag("--show"), Opt("--url"));
+            case "ui": return Ui(env, Flag("--all"), Flag("--json"));
+            case "input" when a.Length > 1: return Input(env, a.Skip(1).ToList());
             case "snap": return Snap(env, Opt("--out"));
             case "stop": return Stop(env);
             default: throw new CrossWinException($"Unknown web command '{string.Join(' ', a)}'. Run 'crosswin web help'.");
@@ -64,8 +70,7 @@ public static class WebCommands
         var session = WebDiagnostics.Start(env, proj, binary, headless: !show);
         string profile = Path.Combine(env.Home, "web", "profile-" + Path.GetFileName(session.Dir));
         var (bproc, wsUrl) = Browser.Launch(binary, headless: !show, profile);
-        try { return RunAsync(env, session, proj, bproc, wsUrl, show).GetAwaiter().GetResult(); }
-        finally { try { if (proj.DevServer is { HasExited: false }) { } } catch (Exception) { } }
+        return RunAsync(env, session, proj, bproc, wsUrl, show).GetAwaiter().GetResult();
     }
 
     private static async Task<int> RunAsync(HostEnv env, SessionLog session, WebProject proj, Process bproc, string wsUrl, bool show)
@@ -140,6 +145,59 @@ public static class WebCommands
         return 0;
     }
 
+    private static int Ui(HostEnv env, bool all, bool json)
+    {
+        var ws = Load(env);
+        return WithPage(ws, async (cdp, sid) =>
+        {
+            var sw = Stopwatch.StartNew();
+            var nodes = await WebPage.Tree(cdp, sid, all);
+            if (json) { Console.WriteLine(new JsonObject { ["framework"] = "web", ["nodes"] = nodes }.ToJsonString(SessionLog.Json)); return 0; }
+            int shown = 0, total = 0;
+            foreach (var node in nodes)
+            {
+                total++;
+                if (node is not JsonObject nn) continue;
+                string name = nn["name"]?.ToString() ?? "";
+                bool interesting = name.Length > 0 || nn["value"] != null || nn["toggle"] != null || nn["clickable"] != null;
+                if (!all && !interesting) continue;
+                shown++;
+                var line = new System.Text.StringBuilder(new string(' ', Math.Min(2 * (nn["depth"]?.GetValue<int>() ?? 0), 40)));
+                line.Append(nn["role"]);
+                if (name.Length > 0) line.Append($" \"{name}\"");
+                if (nn["value"] is { } v) line.Append($" value=\"{v}\"");
+                if (nn["toggle"] is { } tg) line.Append($" [{tg}]");
+                if (nn["id"] is { } id) line.Append($" #{id}");
+                line.Append($"  @{nn["x"]},{nn["y"]} {nn["w"]}x{nn["h"]}");
+                if (nn["enabled"] != null) line.Append(" disabled");
+                if (nn["focused"] != null) line.Append(" focused");
+                Console.WriteLine(line.ToString());
+            }
+            Console.WriteLine($"-- web: {shown} of {total} elements in {sw.ElapsedMilliseconds} ms; click by label: crosswin web input \"click <label>\"");
+            return 0;
+        });
+    }
+
+    private static int Input(HostEnv env, List<string> actions)
+    {
+        var ws = Load(env);
+        return WithPage(ws, async (cdp, sid) =>
+        {
+            var results = new List<string>();
+            bool failed = false;
+            var sw = Stopwatch.StartNew();
+            foreach (string cmd in actions)
+            {
+                try { await WebPage.Do(cdp, sid, cmd); results.Add("ok: " + cmd); }
+                catch (CrossWinException ex) { results.Add("ERROR " + ex.Message.Split('\n')[0]); failed = true; break; }
+            }
+            foreach (string r in results) Console.WriteLine(r);
+            if (!failed) Console.WriteLine($"-- {actions.Count} action(s) in {sw.ElapsedMilliseconds} ms");
+            WebDiagnostics.Interaction(env, actions, results, failed, sw.ElapsedMilliseconds);
+            return failed ? 1 : 0;
+        });
+    }
+
     private static int Snap(HostEnv env, string? outPath)
     {
         var ws = Load(env);
@@ -151,13 +209,14 @@ public static class WebCommands
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
             await File.WriteAllBytesAsync(file, png);
             Console.WriteLine(file);
+            return 0;
         });
     }
 
     private static int Stop(HostEnv env)
     {
         var ws = Load(env);
-        try { WithPage(ws, async (cdp, _) => await cdp.Send("Target.closeTarget", new JsonObject { ["targetId"] = ws.TargetId })); }
+        try { WithPage(ws, async (cdp, _) => { await cdp.Send("Target.closeTarget", new JsonObject { ["targetId"] = ws.TargetId }); return 0; }); }
         catch (Exception) { /* browser may be gone already */ }
         Kill(ws.BrowserPid);
         if (ws.DevServerPid != 0) Kill(ws.DevServerPid);
@@ -192,9 +251,9 @@ public static class WebCommands
     }
 
     /// <summary>Reconnects to the running browser, attaches to the page, runs one operation, then disconnects.</summary>
-    private static int WithPage(WebSession ws, Func<Cdp, string, Task> op)
+    private static int WithPage(WebSession ws, Func<Cdp, string, Task<int>> op)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var cdp = new Cdp();
         try
         {
@@ -202,8 +261,7 @@ public static class WebCommands
             var attached = cdp.Send("Target.attachToTarget", new JsonObject { ["targetId"] = ws.TargetId, ["flatten"] = true }, ct: cts.Token).GetAwaiter().GetResult();
             string sid = attached["sessionId"]?.ToString() ?? throw new CrossWinException("The page is no longer open.");
             cdp.Send("Page.enable", null, sid, cts.Token).GetAwaiter().GetResult();
-            op(cdp, sid).GetAwaiter().GetResult();
-            return 0;
+            return op(cdp, sid).GetAwaiter().GetResult();
         }
         finally { cdp.Dispose(); }
     }
