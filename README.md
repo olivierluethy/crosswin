@@ -11,9 +11,13 @@ CrossWin is an early-stage open-source compatibility and developer-workflow proj
 ```bash
 git clone https://github.com/olivierluethy/crosswin.git && cd crosswin
 ./crosswin setup                       # private .NET SDK + Wine + prefix under ~/.crosswin (no sudo)
+./crosswin gui                         # open the CrossWin window in your browser (easiest, no terminal after this)
 ./crosswin run samples --project HelloWpf
 ./crosswin run /path/to/your/repo      # or: --project <Name> if it contains several apps
 ```
+
+Prefer not to use the terminal? After `setup`, run `./crosswin gui` once and everything else happens in your
+browser: paste an app's project folder, read an honest "can it run" verdict, and click **Run this app**.
 
 Apple Silicon needs Rosetta 2 once: `softwareupdate --install-rosetta --agree-to-license`.
 On Linux (x86_64) install Wine 9+ and its fonts first, e.g. `sudo apt install wine wine64 fonts-wine` (`./crosswin setup` prints the command).
@@ -22,6 +26,7 @@ Other commands:
 
 | Command | Purpose |
 |---|---|
+| `./crosswin gui` | Open the browser control surface: pick a folder, see the verdict, run the app — no terminal |
 | `./crosswin doctor` | Check host, Rosetta, .NET SDK, Wine, prefix |
 | `./crosswin inspect <repo>` | Framework, target, risky APIs and a support verdict — before building |
 | `./crosswin run <repo> --snap-after 3` | Run and save a PNG of the app windows after 3 s |

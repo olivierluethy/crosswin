@@ -188,6 +188,30 @@ Node toolchain, while a .html file or a static folder runs with no server. MCP e
 `crosswin_ui/input/snap/stop` route to desktop, mobile or web by the current session's kind — the same agent loop across
 all three backends. Implemented, not verified yet (compile-only).
 
+## GUI control surface (issues #4, #5, #6 — for non-developers)
+```
+crosswin gui [--port N] [--no-open]
+  Gui.cs            System.Net.HttpListener bound to 127.0.0.1 only (loopback; no web framework, no new deps).
+                    Picks a free port (8787… then an OS-assigned one). Serves one embedded page + a small JSON API
+                    over the SAME engine the CLI uses; Ctrl-C stops the server but leaves any running app alive.
+  Gui/index.html    Single self-contained SPA (inline CSS/JS, system fonts so it works offline), embedded as the
+                    manifest resource "gui/index.html". The original CrossWin design system lives here; the design
+                    rationale is Gui/design-notes.md.
+  API (all JSON):
+    GET  /api/host     host OS/arch + honest setup readiness (wine/prefix/agent) → drives the status bar
+    POST /api/check    {path} → ProjectInspector + Assessment per project, mapped to PLAIN LANGUAGE (verdict word,
+                       friendly summary, friendly risks, runnable flag). Pure host-side; no Wine, no app launch.
+    POST /api/run      {path,project} → spawns the existing attached `crosswin run` via the ./crosswin wrapper in
+                       the background (bash -lc … >> gui-run.log); it writes the shared session files.
+    GET  /api/session  reads the current session.json (state, counts) — the GUI polls this while an app runs.
+    GET  /api/events   reads events.jsonl (?since=&level=) — build errors/exceptions with file:line in the panel.
+    POST /api/stop     Commands.Stop(env); GET /api/recent → recent folders (CROSSWIN_HOME/gui/recent.json).
+```
+The GUI is a thin presentation layer: it adds no capability the CLI/engine lacks and never bypasses the honest
+support verdicts. Opening it does not restart a running session (it only reads the session files). Verified
+host-side (host/check/index/session endpoints, 2026-11-04); the Run-from-GUI path and a visual review are pending
+user acceptance. The engine stays fully usable headless and from the CLI; the GUI is optional.
+
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.
 - Theme fidelity: WPF picks Classic theme under Wine; real apps with explicit styles are unaffected.

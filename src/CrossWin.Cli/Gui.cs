@@ -1,0 +1,394 @@
+using System.Diagnostics;
+using System.Net;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace CrossWin;
+
+/// <summary>
+/// Local, loopback-only control surface for non-developers (#4, #5, #6). Serves a single-page app and a
+/// small JSON API over the same engine the CLI uses: check a project (ProjectInspector + Assessment),
+/// report host/setup readiness honestly, run an app (spawns the existing `crosswin run`) and read back the
+/// shared session/diagnostics. No AI agent, no terminal knowledge required to use it.
+/// Opening the GUI never restarts a running session — it only reads the session files the runner writes.
+/// </summary>
+public static class Gui
+{
+    public static int Serve(HostEnv env, string repo, string[] args)
+    {
+        int wanted = 0;
+        bool open = true;
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--port": wanted = int.Parse(args[++i]); break;
+                case "--no-open": open = false; break;
+                default: throw new CrossWinException($"Unknown option {args[i]} for 'gui'.");
+            }
+        }
+
+        var (listener, port) = StartListener(wanted);
+        string url = $"http://127.0.0.1:{port}/";
+        Console.WriteLine($"CrossWin is running at {url}");
+        Console.WriteLine("Open that address in your browser. Press Ctrl-C here to stop.");
+        if (open) TryOpenBrowser(url);
+
+        using var stopping = new ManualResetEventSlim(false);
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; stopping.Set(); };
+
+        // One request at a time is plenty for a single local user; keep the model simple and predictable.
+        _ = Task.Run(() =>
+        {
+            while (!stopping.IsSet)
+            {
+                HttpListenerContext ctx;
+                try { ctx = listener.GetContext(); }
+                catch { break; } // listener stopped
+                try { Handle(env, repo, ctx); }
+                catch (Exception ex) { TrySend(ctx, 500, Json(new JsonObject { ["error"] = ex.Message })); }
+            }
+        });
+
+        stopping.Wait();
+        Console.WriteLine("\nStopped the CrossWin control surface. Any app you started keeps running (use 'crosswin stop' to close it).");
+        try { listener.Stop(); } catch { }
+        return 0;
+    }
+
+    // ------------------------------------------------------------------- HTTP
+
+    private static void Handle(HostEnv env, string repo, HttpListenerContext ctx)
+    {
+        string path = ctx.Request.Url?.AbsolutePath ?? "/";
+        string method = ctx.Request.HttpMethod;
+
+        if (method == "GET" && path is "/" or "/index.html") { SendIndex(ctx); return; }
+        if (path == "/api/host" && method == "GET") { Send(ctx, 200, Json(HostStatus(env))); return; }
+        if (path == "/api/session" && method == "GET") { Send(ctx, 200, Json(SessionStatus(env))); return; }
+        if (path == "/api/events" && method == "GET") { Send(ctx, 200, Json(EventsStatus(env, ctx.Request))); return; }
+        if (path == "/api/recent" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["recent"] = Recent(env) })); return; }
+        if (path == "/api/check" && method == "POST") { Send(ctx, 200, Json(Check(env, Body(ctx)))); return; }
+        if (path == "/api/run" && method == "POST") { Send(ctx, 200, Json(RunApp(env, repo, Body(ctx)))); return; }
+        if (path == "/api/stop" && method == "POST") { Send(ctx, 200, Json(StopApp(env))); return; }
+
+        Send(ctx, 404, Json(new JsonObject { ["error"] = "Not found." }));
+    }
+
+    private static JsonObject Body(HttpListenerContext ctx)
+    {
+        using var r = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding ?? Encoding.UTF8);
+        string s = r.ReadToEnd();
+        if (string.IsNullOrWhiteSpace(s)) return new JsonObject();
+        return JsonNode.Parse(s)?.AsObject() ?? new JsonObject();
+    }
+
+    // ------------------------------------------------------------------- API
+
+    private static JsonObject HostStatus(HostEnv env)
+    {
+        bool wine = env.Wine != null, agent = File.Exists(env.AgentDll);
+        bool ready = wine && env.PrefixReady && agent;
+        return new JsonObject
+        {
+            ["os"] = env.IsMac ? "macOS" : env.IsLinux ? "Linux" : "this system",
+            ["osDetail"] = env.OsDescription,
+            ["arch"] = env.Arch.ToString(),
+            ["appleSilicon"] = env.IsMac && env.Arch == System.Runtime.InteropServices.Architecture.Arm64,
+            ["wine"] = wine,
+            ["wineVersion"] = wine ? env.WineVersion : null,
+            ["prefix"] = env.PrefixReady,
+            ["agent"] = agent,
+            ["ready"] = ready,
+            ["setupCommand"] = "./crosswin setup",
+        };
+    }
+
+    private static JsonObject Check(HostEnv env, JsonObject body)
+    {
+        string path = (body["path"]?.ToString() ?? "").Trim();
+        if (path.Length == 0) return new JsonObject { ["error"] = "Type the folder of the app you want to run." };
+        path = ExpandHome(path);
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return new JsonObject { ["error"] = $"There's nothing at \"{path}\". Check the folder path and try again." };
+
+        var files = ProjectInspector.FindProjects(path);
+        if (files.Count == 0)
+            return new JsonObject { ["error"] = "That folder doesn't contain a Windows app project (no .csproj). Pick the folder that holds the app's source code." };
+
+        string baseDir = Directory.Exists(path) ? path : Path.GetDirectoryName(path)!;
+        var projects = new JsonArray();
+        foreach (string file in files)
+        {
+            var info = ProjectInspector.Inspect(file);
+            var a = Assessment.For(info);
+            bool runnable = info.IsApp && info.Ui != UiFramework.None && a.Level != SupportLevel.Unsupported;
+            projects.Add(new JsonObject
+            {
+                ["name"] = info.Name,
+                ["rel"] = Path.GetRelativePath(baseDir, file),
+                ["outputType"] = info.OutputType,
+                ["isApp"] = info.IsApp,
+                ["sdkStyle"] = info.SdkStyle,
+                ["ui"] = info.Ui.ToString(),
+                ["frameworks"] = new JsonArray(info.TargetFrameworks.Select(t => (JsonNode?)t).ToArray()),
+                ["chosenFramework"] = info.ChosenTfm,
+                ["dotnet"] = FriendlyRuntime(info),
+                ["platform"] = info.Platform,
+                ["packages"] = new JsonArray(info.Packages.Select(p => (JsonNode?)p).ToArray()),
+                ["level"] = a.Level.ToString(),
+                ["verdict"] = VerdictWord(a.Level, info),
+                ["summary"] = FriendlySummary(a, info),
+                ["detail"] = a.Summary,
+                ["risks"] = new JsonArray(info.Findings.Select(f => (JsonNode?)FriendlyRisk(f)).ToArray()),
+                ["runnable"] = runnable,
+            });
+        }
+        // The thing a non-developer actually wants: one app to run. Surface the best candidate.
+        var apps = files.Select(ProjectInspector.Inspect).Where(p => p.IsApp && p.Ui != UiFramework.None).ToList();
+        return new JsonObject
+        {
+            ["path"] = path,
+            ["projects"] = projects,
+            ["appCount"] = apps.Count,
+            ["defaultApp"] = apps.Count == 1 ? apps[0].Name : null,
+        };
+    }
+
+    private static JsonObject RunApp(HostEnv env, string repo, JsonObject body)
+    {
+        string path = ExpandHome((body["path"]?.ToString() ?? "").Trim());
+        string? project = body["project"]?.ToString();
+        if (path.Length == 0 || (!File.Exists(path) && !Directory.Exists(path)))
+            return new JsonObject { ["error"] = "Pick an app to run first." };
+        if (env.Wine == null || !env.PrefixReady || !File.Exists(env.AgentDll))
+            return new JsonObject { ["error"] = "CrossWin isn't set up yet.", ["needsSetup"] = true, ["setupCommand"] = "./crosswin setup" };
+
+        string wrapper = Path.Combine(repo, "crosswin");
+        if (!File.Exists(wrapper))
+            return new JsonObject { ["error"] = "Could not find the crosswin launcher to start the app." };
+
+        Remember(env, path, project);
+
+        // Spawn the existing attached runner in the background; it writes the shared session files that the
+        // GUI then polls. Redirect to a log via a shell so no pipe needs draining and the child outlives us.
+        var cmd = new StringBuilder("exec ").Append(Sh(wrapper)).Append(" run ").Append(Sh(path));
+        if (!string.IsNullOrEmpty(project)) cmd.Append(" --project ").Append(Sh(project));
+        string log = Path.Combine(env.Home, "gui-run.log");
+        cmd.Append(" >> ").Append(Sh(log)).Append(" 2>&1");
+
+        var psi = new ProcessStartInfo("/bin/bash") { UseShellExecute = false };
+        psi.ArgumentList.Add("-lc");
+        psi.ArgumentList.Add(cmd.ToString());
+        try { Process.Start(psi); }
+        catch (Exception ex) { return new JsonObject { ["error"] = $"Could not start the app: {ex.Message}" }; }
+
+        return new JsonObject { ["started"] = true, ["logPath"] = log };
+    }
+
+    private static JsonObject StopApp(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) return new JsonObject { ["stopped"] = true };
+        try { Commands.Stop(env); } catch (Exception ex) { return new JsonObject { ["error"] = ex.Message }; }
+        return new JsonObject { ["stopped"] = true };
+    }
+
+    private static JsonObject SessionStatus(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) return new JsonObject { ["none"] = true };
+        string dir = File.ReadAllText(env.SessionFile).Trim();
+        if (!Directory.Exists(dir)) return new JsonObject { ["none"] = true };
+        var info = SessionLog.ReadInfo(dir);
+        var events = SessionLog.ReadEvents(dir);
+        int errors = events.Count(e => e["level"]?.ToString() == "error");
+        int warns = events.Count(e => e["level"]?.ToString() == "warn");
+        return new JsonObject
+        {
+            ["id"] = info["id"]?.DeepClone() ?? Path.GetFileName(dir),
+            ["project"] = info["project"]?.DeepClone(),
+            ["kind"] = info["kind"]?.DeepClone(),
+            ["state"] = info["state"]?.DeepClone(),
+            ["ui"] = info["ui"]?.DeepClone(),
+            ["runtime"] = info["runtime"]?.DeepClone(),
+            ["support"] = info["support"]?.DeepClone(),
+            ["eventCount"] = events.Count,
+            ["errors"] = errors,
+            ["warnings"] = warns,
+        };
+    }
+
+    private static JsonObject EventsStatus(HostEnv env, HttpListenerRequest req)
+    {
+        if (!File.Exists(env.SessionFile)) return new JsonObject { ["none"] = true, ["events"] = new JsonArray() };
+        string dir = File.ReadAllText(env.SessionFile).Trim();
+        if (!Directory.Exists(dir)) return new JsonObject { ["none"] = true, ["events"] = new JsonArray() };
+        int since = int.TryParse(req.QueryString["since"], out int s) ? s : 0;
+        string? level = req.QueryString["level"];
+        int minRank = SessionLog.LevelRank(level);
+        var selected = SessionLog.ReadEvents(dir)
+            .Where(e => (e["seq"]?.GetValue<int>() ?? 0) > since)
+            .Where(e => minRank == 0 || SessionLog.LevelRank(e["level"]?.ToString()) >= minRank)
+            .TakeLast(200)
+            .Select(e => e.DeepClone())
+            .ToArray();
+        return new JsonObject { ["events"] = new JsonArray(selected) };
+    }
+
+    // ------------------------------------------------------------------- plain-language mapping
+
+    private static string VerdictWord(SupportLevel level, ProjectInfo info) => level switch
+    {
+        SupportLevel.Supported => "Ready to run",
+        SupportLevel.Experimental => "Worth a try",
+        _ when !info.IsApp || info.Ui == UiFramework.None => "Not an app",
+        _ => "Not a match",
+    };
+
+    private static string FriendlySummary(Assessment a, ProjectInfo info) => a.Level switch
+    {
+        SupportLevel.Supported => $"This is a {UiName(info.Ui)} app. CrossWin has run apps like it, so it should start and respond to clicks and typing.",
+        SupportLevel.Experimental when info.IsNetFramework || !info.SdkStyle =>
+            "This is an older .NET Framework app. CrossWin will try to run it, but some parts may look wrong and the live screenshot/click tools aren't available for it.",
+        SupportLevel.Experimental when info.Findings.Count > 0 =>
+            $"This {UiName(info.Ui)} app should start, but it uses a few features that can behave differently here. See what to expect below.",
+        SupportLevel.Experimental => $"This {UiName(info.Ui)} app targets an older .NET version; it may build and run, but it isn't a supported path.",
+        _ when !info.IsApp => "This project is a code library, not an app you can open — pick the app project instead.",
+        _ when info.Ui == UiFramework.None => "This project isn't a WinForms or WPF app, so CrossWin can't run it as a desktop window.",
+        _ => "CrossWin can't run this one.",
+    };
+
+    private static string FriendlyRuntime(ProjectInfo info)
+    {
+        if (info.ChosenTfm is not { } t) return "unknown";
+        int? v = ProjectInspector.ModernVersion(t);
+        if (v is >= 5) return $".NET {v}";
+        if (info.IsNetFramework) return ".NET Framework";
+        return t;
+    }
+
+    private static string UiName(UiFramework ui) => ui switch
+    {
+        UiFramework.Wpf => "WPF", UiFramework.WinForms => "Windows Forms", UiFramework.Both => "WPF + Windows Forms", _ => "desktop",
+    };
+
+    /// <summary>Strip the "Package: " / "path: " prefix the CLI uses so the GUI shows a clean sentence.</summary>
+    private static string FriendlyRisk(string finding)
+    {
+        int colon = finding.IndexOf(": ", StringComparison.Ordinal);
+        return colon > 0 && colon < 60 ? finding[(colon + 2)..] : finding;
+    }
+
+    // ------------------------------------------------------------------- recent folders
+
+    private static JsonArray Recent(HostEnv env)
+    {
+        string file = Path.Combine(env.Home, "gui", "recent.json");
+        if (!File.Exists(file)) return new JsonArray();
+        try
+        {
+            var arr = JsonNode.Parse(File.ReadAllText(file))?.AsArray() ?? new JsonArray();
+            // Drop entries whose folder no longer exists.
+            var live = arr.Where(n => n?["path"] is { } p && (Directory.Exists(p.ToString()) || File.Exists(p.ToString())))
+                .Select(n => n!.DeepClone()).ToArray();
+            return new JsonArray(live);
+        }
+        catch { return new JsonArray(); }
+    }
+
+    private static void Remember(HostEnv env, string path, string? project)
+    {
+        try
+        {
+            string dir = Path.Combine(env.Home, "gui");
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, "recent.json");
+            var arr = File.Exists(file) ? (JsonNode.Parse(File.ReadAllText(file))?.AsArray() ?? new JsonArray()) : new JsonArray();
+            var kept = arr.Where(n => n?["path"]?.ToString() != path).Select(n => n!.DeepClone()).ToList();
+            kept.Insert(0, new JsonObject
+            {
+                ["path"] = path,
+                ["name"] = project ?? Path.GetFileName(path.TrimEnd('/', '\\')),
+                ["at"] = DateTime.UtcNow.ToString("O"),
+            });
+            File.WriteAllText(file, new JsonArray(kept.Take(8).ToArray()).ToJsonString(SessionLog.Json));
+        }
+        catch { /* recent list is a convenience; never fail a run over it */ }
+    }
+
+    // ------------------------------------------------------------------- plumbing
+
+    private static (HttpListener, int) StartListener(int wanted)
+    {
+        int[] candidates = wanted != 0 ? new[] { wanted } : new[] { 8787, 8788, 8789, 8790, 8791, 8080, 0 };
+        foreach (int c in candidates)
+        {
+            int port = c == 0 ? FreePort() : c;
+            var l = new HttpListener();
+            l.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try { l.Start(); return (l, port); }
+            catch (HttpListenerException) { try { l.Close(); } catch { } }
+            catch (System.Net.Sockets.SocketException) { try { l.Close(); } catch { } }
+        }
+        throw new CrossWinException("Could not open a local port for the CrossWin control surface. Try  ./crosswin gui --port 8899");
+    }
+
+    private static int FreePort()
+    {
+        var t = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        t.Start();
+        int port = ((IPEndPoint)t.LocalEndpoint).Port;
+        t.Stop();
+        return port;
+    }
+
+    private static void SendIndex(HttpListenerContext ctx)
+    {
+        var asm = Assembly.GetExecutingAssembly();
+        using var stream = asm.GetManifestResourceStream("gui/index.html");
+        if (stream == null) { Send(ctx, 500, Json(new JsonObject { ["error"] = "GUI resource missing." })); return; }
+        using var r = new StreamReader(stream);
+        SendBytes(ctx, 200, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(r.ReadToEnd()));
+    }
+
+    private static string Json(JsonNode node) => node.ToJsonString(SessionLog.Json);
+
+    private static void Send(HttpListenerContext ctx, int status, string body)
+        => SendBytes(ctx, status, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(body));
+
+    private static void SendBytes(HttpListenerContext ctx, int status, string contentType, byte[] bytes)
+    {
+        try
+        {
+            ctx.Response.StatusCode = status;
+            ctx.Response.ContentType = contentType;
+            ctx.Response.ContentLength64 = bytes.Length;
+            ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+        }
+        finally { try { ctx.Response.OutputStream.Close(); } catch { } }
+    }
+
+    private static void TrySend(HttpListenerContext ctx, int status, string body)
+    {
+        try { Send(ctx, status, body); } catch { }
+    }
+
+    private static string ExpandHome(string p)
+        => p == "~" || p.StartsWith("~/")
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), p.Length > 1 ? p[2..] : "")
+            : p;
+
+    /// <summary>Single-quote an argument for /bin/bash -lc.</summary>
+    private static string Sh(string s) => "'" + s.Replace("'", "'\\''") + "'";
+
+    private static void TryOpenBrowser(string url)
+    {
+        try
+        {
+            string opener = OperatingSystem.IsMacOS() ? "open" : "xdg-open";
+            Process.Start(new ProcessStartInfo(opener, url) { UseShellExecute = false });
+        }
+        catch { /* the URL is printed; opening is best-effort */ }
+    }
+}

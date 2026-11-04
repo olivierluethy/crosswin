@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CrossWin</title>
+<style>
+  :root{
+    --paper:#FBFAF7; --card:#FFFFFF; --ink:#23262F; --muted:#5B6270; --faint:#8A90A0;
+    --hairline:#E7E4DC; --hairline-strong:#D8D4C9; --accent:#3B45C4; --accent-ink:#2A32A8;
+    --ready:#2F8F5B; --ready-bg:#E9F4EE; --limits:#B8791B; --limits-bg:#F7EFDD; --no:#C0504A; --no-bg:#F7E7E5;
+    --shadow:0 1px 2px rgba(35,38,47,.05), 0 8px 24px rgba(35,38,47,.07);
+    --radius:14px; --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+    --paper:#14161B; --card:#1B1E25; --ink:#ECEDF1; --muted:#A3A9B8; --faint:#777E90;
+    --hairline:#2A2E38; --hairline-strong:#363B47; --accent:#8B93F2; --accent-ink:#A7AEF7;
+    --ready:#5FBE86; --ready-bg:#17271F; --limits:#D9A94E; --limits-bg:#2A2314; --no:#E0877F; --no-bg:#2C1A18;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }}
+  :root[data-theme="dark"]{
+    --paper:#14161B; --card:#1B1E25; --ink:#ECEDF1; --muted:#A3A9B8; --faint:#777E90;
+    --hairline:#2A2E38; --hairline-strong:#363B47; --accent:#8B93F2; --accent-ink:#A7AEF7;
+    --ready:#5FBE86; --ready-bg:#17271F; --limits:#D9A94E; --limits-bg:#2A2314; --no:#E0877F; --no-bg:#2C1A18;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:var(--sans); color:var(--ink); background:var(--paper);
+    -webkit-font-smoothing:antialiased; line-height:1.5; font-size:16px;
+  }
+  .wrap{max-width:720px; margin:0 auto; padding:0 16px 96px}
+
+  /* host bar */
+  .host{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:14px 2px; border-bottom:1px solid var(--hairline); margin-bottom:40px;
+  }
+  .brand{display:flex; align-items:center; gap:10px; font-weight:650; letter-spacing:-.01em; margin-right:auto}
+  .mark{width:22px; height:22px; flex:0 0 auto}
+  .host-fact{color:var(--muted); font-size:13.5px; display:flex; align-items:center; gap:7px}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--faint); flex:0 0 auto}
+  .dot.on{background:var(--ready)} .dot.off{background:var(--limits)}
+
+  /* hero */
+  h1{font-size:30px; line-height:1.15; letter-spacing:-.02em; margin:0 0 10px; font-weight:680}
+  .lede{color:var(--muted); font-size:17px; margin:0 0 28px; max-width:52ch}
+
+  .field{
+    display:flex; gap:10px; background:var(--card); border:1px solid var(--hairline-strong);
+    border-radius:var(--radius); padding:8px 8px 8px 16px; box-shadow:var(--shadow); align-items:center;
+  }
+  .field:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+  .field input{
+    flex:1; border:0; background:transparent; color:var(--ink); font-size:15.5px;
+    font-family:var(--mono); min-width:0; padding:10px 0;
+  }
+  .field input:focus{outline:none}
+  .field input::placeholder{color:var(--faint); font-family:var(--sans)}
+  button{font-family:inherit; font-size:15px; cursor:pointer}
+  .btn{
+    border:0; border-radius:10px; padding:12px 20px; font-weight:620; background:var(--accent); color:#fff;
+    transition:transform .08s ease, filter .15s ease; white-space:nowrap;
+  }
+  .btn:hover{filter:brightness(1.06)} .btn:active{transform:translateY(1px)}
+  .btn:disabled{opacity:.5; cursor:default; filter:none}
+  .btn.ghost{background:transparent; color:var(--accent-ink); border:1px solid var(--hairline-strong)}
+  .btn.ghost:hover{border-color:var(--accent); filter:none}
+  .btn:focus-visible, a:focus-visible, input:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  .recent{margin:16px 2px 0; font-size:14px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+  .recent b{font-weight:550; color:var(--faint)}
+  .chip{
+    border:1px solid var(--hairline); background:var(--card); color:var(--ink); border-radius:999px;
+    padding:5px 12px; font-size:13.5px;
+  }
+  .chip:hover{border-color:var(--accent)}
+
+  .msg{margin-top:18px; padding:14px 16px; border-radius:12px; background:var(--no-bg); color:var(--ink);
+    border:1px solid color-mix(in srgb,var(--no) 35%,transparent); font-size:14.5px}
+
+  /* results */
+  #results{margin-top:36px; display:flex; flex-direction:column; gap:18px}
+  .result-head{font-size:13.5px; color:var(--faint); margin:8px 2px -2px; font-weight:550}
+
+  .verdict{
+    background:var(--card); border:1px solid var(--hairline); border-radius:var(--radius);
+    box-shadow:var(--shadow); overflow:hidden; animation:rise .32s cubic-bezier(.2,.7,.2,1) both;
+  }
+  @media (prefers-reduced-motion:reduce){ .verdict{animation:none} }
+  @keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+  .verdict.secondary{box-shadow:none; opacity:.92}
+
+  .v-top{display:flex; gap:16px; align-items:flex-start; padding:20px 22px 16px}
+  .lamp{width:40px; height:40px; border-radius:50%; flex:0 0 auto; position:relative; margin-top:2px}
+  .lamp::after{content:""; position:absolute; inset:11px; border-radius:50%; background:var(--card)}
+  .lamp.ready{background:var(--ready); box-shadow:0 0 0 6px var(--ready-bg)}
+  .lamp.limits{background:var(--limits); box-shadow:0 0 0 6px var(--limits-bg)}
+  .lamp.no{background:var(--no); box-shadow:0 0 0 6px var(--no-bg)}
+  .v-title{flex:1; min-width:0}
+  .v-name{font-size:19px; font-weight:660; letter-spacing:-.01em; word-break:break-word}
+  .v-word{font-size:14px; font-weight:620; margin-top:1px}
+  .v-word.ready{color:var(--ready)} .v-word.limits{color:var(--limits)} .v-word.no{color:var(--no)}
+  .v-summary{padding:0 22px 4px; color:var(--muted); font-size:15px; max-width:60ch}
+
+  .spec{display:flex; flex-wrap:wrap; gap:8px 10px; padding:16px 22px 4px}
+  .spec .s{display:flex; flex-direction:column; gap:1px; padding:8px 12px; background:var(--paper);
+    border:1px solid var(--hairline); border-radius:10px}
+  .spec .k{font-size:11.5px; color:var(--faint)}
+  .spec .val{font-size:14px; font-family:var(--mono)}
+
+  .risks{padding:14px 22px 2px}
+  .risk{display:flex; gap:10px; padding:10px 0; border-top:1px solid var(--hairline); font-size:14px; color:var(--ink)}
+  .risk:first-child{border-top:0}
+  .risk svg{flex:0 0 auto; margin-top:2px; color:var(--limits)}
+
+  .v-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:16px 22px 22px}
+  .v-note{font-size:13.5px; color:var(--muted)}
+  code{font-family:var(--mono); background:var(--paper); border:1px solid var(--hairline);
+    padding:2px 7px; border-radius:6px; font-size:13px}
+
+  /* run panel */
+  #run{margin-top:24px}
+  .panel{background:var(--card); border:1px solid var(--hairline); border-radius:var(--radius); box-shadow:var(--shadow)}
+  .p-top{display:flex; align-items:center; gap:12px; padding:18px 22px; border-bottom:1px solid var(--hairline)}
+  .spinner{width:16px; height:16px; border-radius:50%; border:2px solid var(--hairline-strong);
+    border-top-color:var(--accent); animation:spin .8s linear infinite; flex:0 0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){ .spinner{animation:none} }
+  .p-state{font-weight:600} .p-sub{color:var(--muted); font-size:13.5px; margin-left:auto}
+  .events{max-height:320px; overflow:auto; padding:8px 0}
+  .ev{display:flex; gap:10px; padding:7px 22px; font-size:13.5px; border-top:1px solid var(--hairline)}
+  .ev:first-child{border-top:0}
+  .ev .lv{font-size:11px; font-weight:650; padding:1px 7px; border-radius:999px; flex:0 0 auto; height:fit-content; margin-top:1px}
+  .ev.error .lv{background:var(--no-bg); color:var(--no)}
+  .ev.warn .lv{background:var(--limits-bg); color:var(--limits)}
+  .ev.info .lv{background:var(--paper); color:var(--muted); border:1px solid var(--hairline)}
+  .ev .body{min-width:0}
+  .ev .m{word-break:break-word}
+  .ev .loc{font-family:var(--mono); font-size:12px; color:var(--faint); margin-top:1px}
+  .empty{padding:22px; color:var(--muted); font-size:14px}
+
+  footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--hairline); color:var(--faint); font-size:13px}
+  footer a{color:var(--accent-ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="host" id="host">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="2.5" y="4.5" width="19" height="13" rx="2.2" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M8 21h8M12 17.5V21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M9 8.5l3 3-3 3M14.5 14.5h1.5" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      CrossWin
+    </div>
+    <div class="host-fact" id="host-fact"><span class="dot"></span><span>Checking your computer…</span></div>
+  </div>
+
+  <main>
+    <h1 id="headline">Run a Windows app here</h1>
+    <p class="lede">Point CrossWin at a project folder. It checks whether the app can run on this computer — honestly — and then runs it. No Windows needed.</p>
+
+    <form class="field" id="form" autocomplete="off">
+      <input id="path" name="path" placeholder="Folder of the app you want to run" spellcheck="false"
+             aria-label="Project folder path" value="">
+      <button class="btn" id="check" type="submit">Check it</button>
+    </form>
+    <div class="recent" id="recent" hidden><b>Recent</b></div>
+    <div class="msg" id="msg" hidden role="alert"></div>
+
+    <div class="result-head" id="result-head" hidden></div>
+    <div id="results"></div>
+
+    <div id="run"></div>
+  </main>
+
+  <footer>
+    CrossWin runs existing WinForms and WPF apps on macOS and Linux through Wine. Support is checked against
+    apps CrossWin has run before, never guaranteed for yours — the verdict is honest, not a promise.
+  </footer>
+</div>
+
+<script>
+const $ = (s,r=document)=>r.querySelector(s);
+const el = (t,c,txt)=>{const e=document.createElement(t); if(c)e.className=c; if(txt!=null)e.textContent=txt; return e;};
+async function api(path, opts){ const r = await fetch(path, opts); return r.json(); }
+
+let HOST = null;
+let lastCheck = null;     // {path, defaultApp}
+let runPolling = null;
+
+const CLASS = {Supported:"ready", Experimental:"limits", Unsupported:"no"};
+
+init();
+async function init(){
+  await loadHost();
+  await loadRecent();
+  $("#form").addEventListener("submit", e=>{ e.preventDefault(); check(); });
+}
+
+async function loadHost(){
+  try{ HOST = await api("/api/host"); }catch{ HOST = null; }
+  const fact = $("#host-fact");
+  fact.innerHTML = "";
+  if(!HOST){ fact.append(dot("off"), span("Couldn't read this computer")); return; }
+  const chip = HOST.appleSilicon ? "Apple Silicon" : HOST.arch;
+  fact.append(dot(), span(`${HOST.os} · ${chip}`));
+  const r = HOST.ready;
+  fact.append(dot(r?"on":"off"), span(r ? `CrossWin ready${HOST.wineVersion?` · ${HOST.wineVersion}`:""}` : "Setup needed"));
+  $("#headline").textContent = HOST.os === "macOS" ? "Run a Windows app on your Mac"
+                             : HOST.os === "Linux" ? "Run a Windows app on Linux"
+                             : "Run a Windows app here";
+}
+function dot(k){ const d=el("span","dot"); if(k)d.classList.add(k); return d; }
+function span(t){ return el("span",null,t); }
+
+async function loadRecent(){
+  let data; try{ data = await api("/api/recent"); }catch{ return; }
+  const box = $("#recent");
+  const items = (data.recent||[]);
+  if(!items.length){ box.hidden = true; return; }
+  box.querySelectorAll(".chip").forEach(c=>c.remove());
+  for(const it of items.slice(0,6)){
+    const b = el("button","chip", it.name || it.path);
+    b.type="button"; b.title = it.path;
+    b.onclick = ()=>{ $("#path").value = it.path; check(); };
+    box.append(b);
+  }
+  box.hidden = false;
+}
+
+function showMsg(text){ const m=$("#msg"); m.textContent=text; m.hidden=!text; }
+
+async function check(){
+  const path = $("#path").value.trim();
+  if(!path){ showMsg("Type the folder of the app you want to run."); return; }
+  showMsg(""); clearResults(); stopRunPanel();
+  const btn = $("#check"); btn.disabled = true; btn.textContent = "Checking…";
+  let data;
+  try{ data = await api("/api/check",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path})}); }
+  catch{ data = {error:"CrossWin isn't responding. Is the control surface still running in your terminal?"}; }
+  btn.disabled = false; btn.textContent = "Check it";
+  if(data.error){ showMsg(data.error); return; }
+  lastCheck = {path:data.path, defaultApp:data.defaultApp};
+  renderResults(data);
+}
+
+function clearResults(){ $("#results").innerHTML=""; $("#result-head").hidden = true; }
+
+function renderResults(data){
+  const host = $("#result-head");
+  const apps = data.projects.filter(p=>p.isApp && p.ui!=="None");
+  const others = data.projects.filter(p=>!(p.isApp && p.ui!=="None"));
+  const ordered = [...apps, ...others];
+  host.hidden = false;
+  host.textContent = data.appCount > 1
+    ? `${data.appCount} apps found in this folder — pick the one to run`
+    : data.projects.length > 1 ? "What's in this folder" : "";
+  const results = $("#results");
+  ordered.forEach((p,i)=> results.append(verdictCard(p, i>0 && (apps.length>1 || others.length))));
+}
+
+function verdictCard(p, secondary){
+  const k = CLASS[p.level] || "no";
+  const card = el("div","verdict"+(secondary?" secondary":""));
+
+  const top = el("div","v-top");
+  top.append(el("div","lamp "+k));
+  const title = el("div","v-title");
+  title.append(el("div","v-name", p.name));
+  title.append(el("div","v-word "+k, p.verdict));
+  top.append(title);
+  card.append(top);
+
+  card.append(el("div","v-summary", p.summary));
+
+  if(p.isApp && p.ui!=="None"){
+    const spec = el("div","spec");
+    spec.append(specItem("Kind", uiLabel(p.ui)));
+    spec.append(specItem("Needs", p.dotnet));
+    spec.append(specItem("Build", p.platform==="AnyCPU" ? "Any (64-bit)" : p.platform));
+    card.append(spec);
+  }
+
+  if(p.risks && p.risks.length){
+    const r = el("div","risks");
+    for(const risk of p.risks) r.append(riskRow(risk));
+    card.append(r);
+  }
+
+  card.append(actions(p));
+  return card;
+}
+
+function specItem(k,v){ const s=el("div","s"); s.append(el("div","k",k)); s.append(el("div","val",v)); return s; }
+function uiLabel(ui){ return ui==="Wpf"?"WPF":ui==="WinForms"?"Windows Forms":ui==="Both"?"WPF + Forms":ui; }
+
+function riskRow(text){
+  const row = el("div","risk");
+  row.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 9v4m0 3.5h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  row.append(el("span","m",text));
+  return row;
+}
+
+function actions(p){
+  const box = el("div","v-actions");
+  if(p.runnable){
+    if(HOST && HOST.ready){
+      const run = el("button","btn","Run this app");
+      run.onclick = ()=>runApp(p.name);
+      box.append(run);
+      if(p.level==="Experimental") box.append(el("span","v-note","It should start — keep the notes above in mind."));
+    }else{
+      box.append(el("span","v-note","Almost there: CrossWin needs a one-time setup before it can run apps."));
+      const code = el("code",null,(HOST&&HOST.setupCommand)||"./crosswin setup");
+      const line = el("div","v-note"); line.append(span("In your terminal, run "), code, span(" once."));
+      box.append(line);
+    }
+  }else{
+    box.append(el("span","v-note", p.isApp===false
+      ? "This is part of the app's code, not something to open on its own."
+      : "CrossWin can't run this project as a desktop window."));
+  }
+  return box;
+}
+
+async function runApp(project){
+  const body = {path:lastCheck.path, project};
+  let data;
+  try{ data = await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); }
+  catch{ data = {error:"Couldn't reach CrossWin to start the app."}; }
+  if(data.error){
+    if(data.needsSetup) showMsg(`${data.error} In your terminal, run ${data.setupCommand} once, then try again.`);
+    else showMsg(data.error);
+    return;
+  }
+  openRunPanel(project);
+}
+
+function openRunPanel(project){
+  const box = $("#run");
+  box.innerHTML = "";
+  const panel = el("div","panel");
+  const top = el("div","p-top");
+  top.append(el("div","spinner"));
+  const st = el("div","p-state","Starting "+project+"…"); st.id="p-state";
+  top.append(st);
+  const sub = el("div","p-sub",""); sub.id="p-sub"; top.append(sub);
+  const stop = el("button","btn ghost","Stop"); stop.style.marginLeft="12px";
+  stop.onclick = async()=>{ stop.disabled=true; await api("/api/stop",{method:"POST"}); };
+  top.append(stop);
+  panel.append(top);
+  const evbox = el("div","events"); evbox.id="events";
+  evbox.append(el("div","empty","Building and launching — this can take a minute the first time."));
+  panel.append(evbox);
+  box.append(panel);
+  box.scrollIntoView({behavior:"smooth", block:"nearest"});
+
+  let lastSeq = 0, firstEvents = true;
+  clearInterval(runPolling);
+  runPolling = setInterval(async()=>{
+    let s; try{ s = await api("/api/session"); }catch{ return; }
+    if(s && !s.none){
+      $("#p-state").textContent = stateLabel(s.state, project);
+      const bits = [];
+      if(s.errors) bits.push(s.errors+" error"+(s.errors>1?"s":""));
+      if(s.warnings) bits.push(s.warnings+" note"+(s.warnings>1?"s":""));
+      $("#p-sub").textContent = bits.join(" · ");
+      if(s.state==="running" || s.state==="exited" || s.state==="error") $(".spinner")?.remove();
+    }
+    let ev; try{ ev = await api("/api/events?since="+lastSeq); }catch{ return; }
+    const list = (ev.events||[]);
+    if(list.length){
+      if(firstEvents){ $("#events").innerHTML=""; firstEvents=false; }
+      for(const e of list){ $("#events").append(eventRow(e)); lastSeq = Math.max(lastSeq, e.seq||0); }
+      $("#events").scrollTop = $("#events").scrollHeight;
+    }
+  }, 1200);
+}
+
+function stateLabel(state, project){
+  switch(state){
+    case "building": return "Building "+project+"…";
+    case "starting": return "Starting "+project+"…";
+    case "running": return project+" is running";
+    case "exited": return project+" closed";
+    case "error": return project+" hit a problem";
+    default: return project;
+  }
+}
+
+function eventRow(e){
+  const lv = e.level||"info";
+  const row = el("div","ev "+lv);
+  row.append(el("span","lv", lv));
+  const body = el("div","body");
+  body.append(el("div","m", e.msg || e.kind || ""));
+  if(e.file){ body.append(el("div","loc", e.file + (e.line?":"+e.line:""))); }
+  row.append(body);
+  return row;
+}
+
+function stopRunPanel(){ clearInterval(runPolling); runPolling=null; $("#run").innerHTML=""; }
+</script>
+</body>
+</html>

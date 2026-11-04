@@ -9,6 +9,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         CrossWin — run existing WinForms/WPF apps on macOS and Linux via Wine.
 
         Usage:
+          crosswin gui [--port N] [--no-open]  Open the CrossWin window in your browser: pick an app folder,
+                                               see an honest "can it run" verdict, and run it — no terminal needed
           crosswin doctor                      Check host, Rosetta, .NET SDK, Wine and prefix
           crosswin setup                       Install/prepare Wine, the Wine prefix and the CrossWin agent
           crosswin inspect <repo|csproj>       Report UI framework, target framework, backend and risks
@@ -63,6 +65,7 @@ try
         "session" => Commands.SessionStatus(env, args.Skip(1).ToArray()),
         "compare" when args.Length > 1 => Compare.Run(args.Skip(1).ToArray()),
         "stop" => Commands.Stop(env),
+        "gui" => Gui.Serve(env, repo, args.Skip(1).ToArray()),
         "mcp" => Mcp.Serve(env, repo),
         "input" when args.Length > 1 => Commands.Input(env, args.Skip(1).ToArray()),
         "mobile" => CrossWin.Mobile.MobileCommands.Dispatch(env, args.Skip(1).ToArray()),
