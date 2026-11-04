@@ -106,7 +106,7 @@ public static class WebCommands
             });
             session.Event("info", "app.ready", "browser attached; console, errors and network streaming");
             Save(env, new WebSession(wsUrl, targetId, bproc.Id, proj.DevServer?.Id ?? 0));
-            Console.WriteLine($"Watching {proj.Url} ({(show ? "visible window" : "headless")}). Ctrl-C to stop watching.");
+            Console.WriteLine($"Watching {proj.Url} ({(show ? "visible window" : "headless")}). Ctrl-C stops the browser; run again to reopen.");
             Console.WriteLine("Diagnostics: crosswin events --level warn · crosswin session · crosswin web snap");
         }
         catch (Exception ex) when (ex is CrossWinException or OperationCanceledException)
@@ -128,27 +128,24 @@ public static class WebCommands
         finally { Console.CancelKeyPress -= onCancel; }
 
         cdp.Dispose();
-        if (bproc.HasExited)
-        {
-            session.Event("info", "app.exit", "the browser was closed");
-            session.SetInfo(o => { o["state"] = "exited"; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
-            KillDevServer(proj);
-            File.Delete(SessionPath(env));
-            Console.WriteLine("Browser closed.");
-        }
-        else
-        {
-            // Detached: leave the browser (and dev server) running so `web snap` and a visible window persist.
-            session.Event("info", "collector.detached", "stopped watching; browser still running");
-            Console.WriteLine("Detached. The browser is still running — crosswin web stop closes it.");
-        }
+        // Ctrl-C (or the browser closing) ends the session. On an interactive Ctrl-C the terminal already delivers
+        // SIGINT to the child browser, so "leave it running" was never true here — stop everything we started and
+        // clean up, so no stale session points at a dead browser. (MCP's background `web run` gets no SIGINT and
+        // keeps running until crosswin_stop.)
+        bool browserGone = bproc.HasExited;
+        try { if (!bproc.HasExited) bproc.Kill(true); } catch (Exception) { }
+        KillDevServer(proj);
+        session.Event("info", "app.exit", browserGone ? "the browser was closed" : "stopped (Ctrl-C)");
+        session.SetInfo(o => { o["state"] = browserGone ? "exited" : "stopped"; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
+        try { File.Delete(SessionPath(env)); } catch (Exception) { }
+        Console.WriteLine(browserGone ? "Browser closed." : "Stopped (browser and any dev server closed).");
         return 0;
     }
 
     private static int Ui(HostEnv env, bool all, bool json)
     {
         var ws = Load(env);
-        return WithPage(ws, async (cdp, sid) =>
+        return WithPage(env, ws, async (cdp, sid) =>
         {
             var sw = Stopwatch.StartNew();
             var nodes = await WebPage.Tree(cdp, sid, all);
@@ -181,7 +178,7 @@ public static class WebCommands
     private static int Input(HostEnv env, List<string> actions)
     {
         var ws = Load(env);
-        return WithPage(ws, async (cdp, sid) =>
+        return WithPage(env, ws, async (cdp, sid) =>
         {
             var results = new List<string>();
             bool failed = false;
@@ -201,7 +198,7 @@ public static class WebCommands
     private static int Snap(HostEnv env, string? outPath)
     {
         var ws = Load(env);
-        return WithPage(ws, async (cdp, sid) =>
+        return WithPage(env, ws, async (cdp, sid) =>
         {
             var shot = await cdp.Send("Page.captureScreenshot", new JsonObject { ["format"] = "png", ["captureBeyondViewport"] = true }, sid);
             byte[] png = Convert.FromBase64String(shot["data"]?.ToString() ?? throw new CrossWinException("The browser returned no image."));
@@ -216,7 +213,7 @@ public static class WebCommands
     private static int Stop(HostEnv env)
     {
         var ws = Load(env);
-        try { WithPage(ws, async (cdp, _) => { await cdp.Send("Target.closeTarget", new JsonObject { ["targetId"] = ws.TargetId }); return 0; }); }
+        try { WithPage(env, ws, async (cdp, _) => { await cdp.Send("Target.closeTarget", new JsonObject { ["targetId"] = ws.TargetId }); return 0; }); }
         catch (Exception) { /* browser may be gone already */ }
         Kill(ws.BrowserPid);
         if (ws.DevServerPid != 0) Kill(ws.DevServerPid);
@@ -251,7 +248,7 @@ public static class WebCommands
     }
 
     /// <summary>Reconnects to the running browser, attaches to the page, runs one operation, then disconnects.</summary>
-    private static int WithPage(WebSession ws, Func<Cdp, string, Task<int>> op)
+    private static int WithPage(HostEnv env, WebSession ws, Func<Cdp, string, Task<int>> op)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var cdp = new Cdp();
@@ -259,11 +256,26 @@ public static class WebCommands
         {
             cdp.ConnectAsync(ws.CdpUrl, cts.Token).GetAwaiter().GetResult();
             var attached = cdp.Send("Target.attachToTarget", new JsonObject { ["targetId"] = ws.TargetId, ["flatten"] = true }, ct: cts.Token).GetAwaiter().GetResult();
-            string sid = attached["sessionId"]?.ToString() ?? throw new CrossWinException("The page is no longer open.");
+            string sid = attached["sessionId"]?.ToString() ?? throw new CrossWinException("The page is no longer open — restart with  crosswin web run <target>.");
             cdp.Send("Page.enable", null, sid, cts.Token).GetAwaiter().GetResult();
             return op(cdp, sid).GetAwaiter().GetResult();
         }
+        catch (Exception ex) when (Unreachable(ex))
+        {
+            // The browser for this session is gone (e.g. closed, or killed by Ctrl-C on an interactive `web run`).
+            // Drop the stale pointer so the next call reports "no web app running" rather than failing to connect.
+            try { File.Delete(SessionPath(env)); } catch (Exception) { }
+            throw new CrossWinException("The browser for this web session has closed. Start a new one with  crosswin web run <target>.");
+        }
         finally { cdp.Dispose(); }
+    }
+
+    private static bool Unreachable(Exception ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+            if (e is System.Net.WebSockets.WebSocketException or System.Net.Sockets.SocketException or System.Net.Http.HttpRequestException)
+                return true;
+        return false;
     }
 
     private static void KillDevServer(WebProject proj) { try { if (proj.DevServer is { HasExited: false } d) d.Kill(true); } catch (Exception) { } }
