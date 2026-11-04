@@ -16,8 +16,10 @@ git clone https://github.com/olivierluethy/crosswin.git && cd crosswin
 ./crosswin run /path/to/your/repo      # or: --project <Name> if it contains several apps
 ```
 
-Prefer not to use the terminal? After `setup`, run `./crosswin gui` once and everything else happens in your
-browser: paste an app's project folder, read an honest "can it run" verdict, and click **Run this app**.
+Prefer not to use the terminal? After cloning, **double-click `CrossWin.command`** (macOS) — it opens the
+CrossWin window in your browser, where you can run the setup, paste an app's project folder, read an honest
+"can it run" verdict, and click **Run this app**. (First time: if macOS blocks it, right-click → Open → Open.)
+On Linux, run `./crosswin gui` once. Everything else happens in the browser.
 
 Apple Silicon needs Rosetta 2 once: `softwareupdate --install-rosetta --agree-to-license`.
 On Linux (x86_64) install Wine 9+ and its fonts first, e.g. `sudo apt install wine wine64 fonts-wine` (`./crosswin setup` prints the command).
