@@ -78,9 +78,14 @@ public static class Mcp
                    ("show", "boolean", "Open a visible browser window instead of headless", false)),
             (env, repo, a) => StartWebRun(env, a)),
         new("crosswin_session",
-            "Current session: target identity (project, git revision, runtime), state, error/warning counts, most recent error with file:line.",
-            Schema(),
-            (env, repo, a) => Capture(() => Commands.SessionStatus(env, new[] { "--json" }))),
+            "Session status: target identity (project, git revision, runtime), state, error/warning counts, most recent error with file:line. Defaults to the current session; pass session=<id> (full id or unique prefix, from crosswin_sessions) to read any recorded run without changing which is current — safe for concurrent agents reading their own sessions.",
+            Schema(("session", "string", "Session id or unique prefix to read instead of the current one", false)),
+            (env, repo, a) =>
+            {
+                var args = new List<string> { "--json" };
+                if (Str(a, "session") is { } s) { args.Add("--session"); args.Add(s); }
+                return Capture(() => Commands.SessionStatus(env, args.ToArray()));
+            }),
         new("crosswin_sessions",
             "List every run this machine has recorded (desktop, web, mobile), newest first, with its id, kind, project, liveness-checked state and error/warning counts, and which one is current. Use to discover a session to attach to or report on; read-only (does not change the current session).",
             Schema(),
@@ -106,11 +111,12 @@ public static class Mcp
             Schema(("level", "string", "Minimum level: debug, info, warn, error (default info)", false),
                    ("kind", "string", "Event kind prefix, e.g. build, exception, interaction", false),
                    ("since", "integer", "Only events with seq greater than this", false),
-                   ("last", "integer", "At most this many events (default 50)", false)),
+                   ("last", "integer", "At most this many events (default 50)", false),
+                   ("session", "string", "Session id or unique prefix to read instead of the current one (concurrent-safe)", false)),
             (env, repo, a) =>
             {
                 var args = new List<string> { "--json" };
-                foreach (string k in new[] { "level", "kind", "since", "last" })
+                foreach (string k in new[] { "level", "kind", "since", "last", "session" })
                     if (a[k] is { } v) { args.Add("--" + k); args.Add(v.ToString()); }
                 return Capture(() => Commands.Events(env, args.ToArray()));
             }),
