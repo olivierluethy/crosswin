@@ -35,6 +35,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
           crosswin sessions [--json]           List every run with its state and error counts (* = current)
           crosswin attach <session-id>         Make a recorded session current (ui/events/snap/stop act on it);
                                                starts/stops nothing. Id or unique prefix from  sessions
+                                               (ui/events/session/snap/input/stop also take --session <id> to act
+                                               on one run without changing which is current — multi-session)
           crosswin compare <reference> <current> [--geometry [px]] [--json]
                                                Diff two UI snapshots (from  ui --json): missing/extra elements and
                                                value/toggle/enabled/bounds changes; or two event traces (from
@@ -62,14 +64,14 @@ try
         "setup" => Commands.Setup(env, repo),
         "inspect" when args.Length > 1 => Commands.Inspect(env, args[1]),
         "run" when args.Length > 1 => Commands.Run(env, repo, args[1], args.Skip(2).ToArray()),
-        "snap" => Commands.Snap(env),
+        "snap" => Commands.Snap(env, args.Skip(1).ToArray()),
         "ui" => Commands.Ui(env, args.Skip(1).ToArray()),
         "events" => Commands.Events(env, args.Skip(1).ToArray()),
         "session" => Commands.SessionStatus(env, args.Skip(1).ToArray()),
         "sessions" => Commands.Sessions(env, args.Skip(1).ToArray()),
         "attach" => Commands.Attach(env, args.Skip(1).ToArray()),
         "compare" when args.Length > 1 => Compare.Run(args.Skip(1).ToArray()),
-        "stop" => Commands.Stop(env),
+        "stop" => Commands.Stop(env, args.Skip(1).ToArray()),
         "gui" => Gui.Serve(env, repo, args.Skip(1).ToArray()),
         "mcp" => Mcp.Serve(env, repo),
         "input" when args.Length > 1 => Commands.Input(env, args.Skip(1).ToArray()),

@@ -489,7 +489,7 @@ public static class Gui
     private static JsonObject StopApp(HostEnv env)
     {
         if (!File.Exists(env.SessionFile)) return new JsonObject { ["stopped"] = true };
-        try { Commands.Stop(env); } catch (Exception ex) { return new JsonObject { ["error"] = ex.Message }; }
+        try { Commands.Stop(env, Array.Empty<string>()); } catch (Exception ex) { return new JsonObject { ["error"] = ex.Message }; }
         return new JsonObject { ["stopped"] = true };
     }
 

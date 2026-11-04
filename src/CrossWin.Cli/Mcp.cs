@@ -132,13 +132,13 @@ public static class Mcp
             Schema(),
             (env, repo, a) => Web(env) ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "snap" }))
                 : Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" }))
-                : Capture(() => Commands.Snap(env))),
+                : Capture(() => Commands.Snap(env, Array.Empty<string>()))),
         new("crosswin_stop",
             "Stop the running app of the current session.",
             Schema(),
             (env, repo, a) => Web(env) ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "stop" }))
                 : Android(env) ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" }))
-                : Capture(() => Commands.Stop(env))),
+                : Capture(() => Commands.Stop(env, Array.Empty<string>()))),
     };
 
     public static int Serve(HostEnv env, string repo)
@@ -239,7 +239,7 @@ public static class Mcp
     /// </summary>
     private static (int, string) StartRun(HostEnv env, string path, string? project, bool noBuild)
     {
-        Capture(() => Commands.Stop(env));
+        Capture(() => Commands.Stop(env, Array.Empty<string>()));
         string before = File.Exists(env.SessionFile) ? File.ReadAllText(env.SessionFile).Trim() : "";
         var args = new List<string> { "run", path };
         if (project != null) { args.Add("--project"); args.Add(project); }

@@ -646,9 +646,9 @@ public static class Commands
 
     // ------------------------------------------------------- snap / input
 
-    public static int Snap(HostEnv env)
+    public static int Snap(HostEnv env, string[] args)
     {
-        string session = CurrentSession(env);
+        string session = CurrentSession(env, args);
         var sw = Stopwatch.StartNew();
         var lines = RecaptureX11(env, RequestAgent(session, "snap", "", null));
         foreach (string line in lines) Console.WriteLine(line);
@@ -691,15 +691,20 @@ public static class Commands
         return result;
     }
 
-    public static int Input(HostEnv env, string[] commands)
+    public static int Input(HostEnv env, string[] args)
     {
-        string session = CurrentSession(env);
+        string session = CurrentSession(env, args);
+        // --session <id> is a target selector, not an interaction — drop it (and its value) from the actions.
+        var commands = args.ToList();
+        int si = commands.IndexOf("--session");
+        if (si >= 0) commands.RemoveRange(si, Math.Min(2, commands.Count - si));
+        if (commands.Count == 0) throw new CrossWinException("No actions given. Example: ./crosswin input \"click Save\" \"expect Saved\"");
         var sw = Stopwatch.StartNew();
         var lines = RequestAgent(session, "input", string.Join('\n', commands), null);
         foreach (string line in lines) Console.WriteLine(line);
         bool failed = lines.Any(l => l.StartsWith("ERROR"));
         // Interaction history: what was sent, what the agent resolved, how long it took (typed text is redacted).
-        new SessionLog(session).Event(failed ? "warn" : "info", "interaction.batch", $"{commands.Length} action(s){(failed ? ", failed" : "")}", e =>
+        new SessionLog(session).Event(failed ? "warn" : "info", "interaction.batch", $"{commands.Count} action(s){(failed ? ", failed" : "")}", e =>
         {
             e["durationMs"] = sw.ElapsedMilliseconds;
             e["actions"] = new System.Text.Json.Nodes.JsonArray(commands.Select(c => (System.Text.Json.Nodes.JsonNode?)SessionLog.Redact(c)).ToArray());
@@ -712,7 +717,7 @@ public static class Commands
 
     public static int Ui(HostEnv env, string[] args)
     {
-        string session = CurrentSession(env);
+        string session = CurrentSession(env, args);
         var sw = Stopwatch.StartNew();
         var lines = RequestAgent(session, "ui", "", null);
         string body = string.Join("\n", lines);
@@ -747,18 +752,24 @@ public static class Commands
         return 0;
     }
 
-    /// <summary>The current session (desktop or mobile); Android sessions pull new logcat lines first.</summary>
-    private static string LatestSession(HostEnv env)
+    /// <summary>The session to read (the one named by --session &lt;id&gt;, else the current pointer); desktop or
+    /// mobile. Android sessions pull new logcat lines first.</summary>
+    private static string LatestSession(HostEnv env, string[] args)
     {
-        if (!File.Exists(env.SessionFile)) throw new CrossWinException("No app has been started with  ./crosswin run  or  ./crosswin mobile run  yet.");
-        string dir = File.ReadAllText(env.SessionFile).Trim();
+        string dir = SelectedSession(env, args) is { } sel ? sel : LatestPointer(env);
         CrossWin.Mobile.AndroidDiagnostics.Ingest(env, dir);
         return dir;
     }
 
+    private static string LatestPointer(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) throw new CrossWinException("No app has been started with  ./crosswin run  or  ./crosswin mobile run  yet.");
+        return File.ReadAllText(env.SessionFile).Trim();
+    }
+
     public static int Events(HostEnv env, string[] args)
     {
-        string session = LatestSession(env);
+        string session = LatestSession(env, args);
         string? Opt(string name) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
         int minRank = SessionLog.LevelRank(Opt("--level") ?? "info");
         long since = long.TryParse(Opt("--since"), out long sn) ? sn : 0;
@@ -790,7 +801,7 @@ public static class Commands
 
     public static int SessionStatus(HostEnv env, string[] args)
     {
-        string session = LatestSession(env);
+        string session = LatestSession(env, args);
         var info = SessionLog.ReadInfo(session);
         var events = SessionLog.ReadEvents(session);
         // A runner killed without cleanup leaves state "running": check the process.
@@ -936,11 +947,16 @@ public static class Commands
         return 0;
     }
 
-    /// <summary>Stops the app of the current session (and with it the `run` process), if still running.</summary>
-    public static int Stop(HostEnv env)
+    /// <summary>Stops the app of a session (and with it the `run` process), if still running — the one named by
+    /// --session &lt;id&gt;, else the current one.</summary>
+    public static int Stop(HostEnv env, string[] args)
     {
-        if (!File.Exists(env.SessionFile)) { Console.WriteLine("No session."); return 0; }
-        string session = File.ReadAllText(env.SessionFile).Trim();
+        string? session = SelectedSession(env, args);
+        if (session == null)
+        {
+            if (!File.Exists(env.SessionFile)) { Console.WriteLine("No session."); return 0; }
+            session = File.ReadAllText(env.SessionFile).Trim();
+        }
         var info = SessionLog.ReadInfo(session);
         bool any = false;
         foreach (string key in new[] { "pid", "runnerPid" })
@@ -968,13 +984,31 @@ public static class Commands
         try { return !Process.GetProcessById(pid).HasExited; } catch (ArgumentException) { return false; }
     }
 
-    private static string CurrentSession(HostEnv env)
+    private static string CurrentSession(HostEnv env) => CurrentSession(env, Array.Empty<string>());
+
+    /// <summary>The session a command acts on: the one named by --session &lt;id&gt; (a recorded id or unique prefix,
+    /// without disturbing which session is "current"), else the current pointer. Requires the CrossWin agent.</summary>
+    private static string CurrentSession(HostEnv env, string[] args)
+    {
+        string session = SelectedSession(env, args) is { } sel ? sel : CurrentPointer(env);
+        if (!File.Exists(Path.Combine(session, "agent.ready")))
+            throw new CrossWinException($"The CrossWin agent is not attached in session {Path.GetFileName(session)} (app not started, already exited, or older than .NET 6).");
+        return session;
+    }
+
+    private static string CurrentPointer(HostEnv env)
     {
         if (!File.Exists(env.SessionFile)) throw new CrossWinException("No app has been started with  ./crosswin run  yet.");
-        string session = File.ReadAllText(env.SessionFile).Trim();
-        if (!File.Exists(Path.Combine(session, "agent.ready")))
-            throw new CrossWinException($"The CrossWin agent is not attached in session {session} (app not started, already exited, or older than .NET 6).");
-        return session;
+        return File.ReadAllText(env.SessionFile).Trim();
+    }
+
+    /// <summary>Resolves --session &lt;id&gt; to a recorded session dir, or null when the flag is absent.</summary>
+    private static string? SelectedSession(HostEnv env, string[] args)
+    {
+        int i = Array.IndexOf(args, "--session");
+        if (i < 0) return null;
+        if (i + 1 >= args.Length) throw new CrossWinException("--session needs a session id (see  ./crosswin sessions).");
+        return ResolveSession(env, args[i + 1]);
     }
 
     /// <summary>File-based request/response with the in-process agent (see tools/CrossWin.Agent).</summary>
