@@ -72,6 +72,8 @@ public static class Gui
         if (path == "/api/recent" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["recent"] = Recent(env) })); return; }
         if (path == "/api/check" && method == "POST") { Send(ctx, 200, Json(Check(env, Body(ctx)))); return; }
         if (path == "/api/run" && method == "POST") { Send(ctx, 200, Json(RunApp(env, repo, Body(ctx)))); return; }
+        if (path == "/api/snap" && method == "POST") { Send(ctx, 200, Json(Snap(env))); return; }
+        if (path == "/api/ui" && method == "GET") { Send(ctx, 200, Json(Ui(env))); return; }
         if (path == "/api/stop" && method == "POST") { Send(ctx, 200, Json(StopApp(env))); return; }
 
         Send(ctx, 404, Json(new JsonObject { ["error"] = "Not found." }));
@@ -186,6 +188,42 @@ public static class Gui
         catch (Exception ex) { return new JsonObject { ["error"] = $"Could not start the app: {ex.Message}" }; }
 
         return new JsonObject { ["started"] = true, ["logPath"] = log };
+    }
+
+    private static JsonObject Snap(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) return new JsonObject { ["error"] = "No app is running yet." };
+        var (exit, stdout, stderr) = RunCli(env, "snap");
+        var images = new JsonArray();
+        foreach (string line in stdout.Split('\n'))
+        {
+            string[] f = line.Trim().Split('\t');
+            if (f.Length < 3 || f[0].StartsWith("ERROR") || !f[0].EndsWith(".png", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!File.Exists(f[0]) || images.Count >= 4) continue;
+            byte[] png;
+            try { png = File.ReadAllBytes(f[0]); } catch { continue; }
+            images.Add(new JsonObject
+            {
+                ["title"] = f.Length > 2 ? f[2] : "",
+                ["size"] = f.Length > 1 ? f[1] : "",
+                ["dataUri"] = "data:image/png;base64," + Convert.ToBase64String(png),
+            });
+        }
+        if (images.Count > 0) return new JsonObject { ["images"] = images };
+        // Snap can legitimately be unavailable (GPU WPF, .NET Framework/Mono apps, app not ready yet).
+        string why = (stdout + "\n" + stderr).Split('\n').FirstOrDefault(l => l.Contains("ERROR") || l.Contains("not available") || l.Contains("No app")) ?? "";
+        return new JsonObject { ["error"] = why.Length > 0 ? CleanCli(why) : "No preview available yet — the app may still be starting, or this app can't be captured." };
+    }
+
+    private static JsonObject Ui(HostEnv env)
+    {
+        if (!File.Exists(env.SessionFile)) return new JsonObject { ["error"] = "No app is running yet." };
+        var (exit, stdout, stderr) = RunCli(env, "ui", "--json");
+        string body = stdout.Trim();
+        if (exit != 0 || body.Length == 0 || body.StartsWith("ERROR"))
+            return new JsonObject { ["error"] = CleanCli((body.Length > 0 ? body : stderr).Split('\n').FirstOrDefault() ?? "Couldn't read the app's controls.") };
+        try { return JsonNode.Parse(body)!.AsObject(); }
+        catch { return new JsonObject { ["error"] = "Couldn't read the app's controls." }; }
     }
 
     private static JsonObject StopApp(HostEnv env)
@@ -318,6 +356,39 @@ public static class Gui
     }
 
     // ------------------------------------------------------------------- plumbing
+
+    /// <summary>Run a quick CLI command in-place (snap/ui — not an app launch) and capture stdout/stderr separately.</summary>
+    private static (int exit, string stdout, string stderr) RunCli(HostEnv env, params string[] args)
+    {
+        string? dll = Assembly.GetEntryAssembly()?.Location;
+        var psi = new ProcessStartInfo
+        {
+            FileName = dll != null && File.Exists(env.Dotnet) ? env.Dotnet : "/bin/bash",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        if (dll != null && File.Exists(env.Dotnet)) { psi.ArgumentList.Add(dll); foreach (string a in args) psi.ArgumentList.Add(a); }
+        else { psi.ArgumentList.Add("-lc"); psi.ArgumentList.Add("exec crosswin " + string.Join(' ', args)); }
+        try
+        {
+            using var p = Process.Start(psi)!;
+            string o = p.StandardOutput.ReadToEnd();
+            string e = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            return (p.ExitCode, o, e);
+        }
+        catch (Exception ex) { return (-1, "", ex.Message); }
+    }
+
+    /// <summary>Drop the agent's "ERROR " prefix and the "crosswin: " noise so the GUI shows a plain sentence.</summary>
+    private static string CleanCli(string s)
+    {
+        s = s.Trim();
+        if (s.StartsWith("ERROR", StringComparison.OrdinalIgnoreCase)) s = s[5..].TrimStart(' ', ':', '\t');
+        if (s.StartsWith("crosswin:", StringComparison.OrdinalIgnoreCase)) s = s["crosswin:".Length..].Trim();
+        return s.Length > 0 ? s : "Something went wrong.";
+    }
 
     private static (HttpListener, int) StartListener(int wanted)
     {

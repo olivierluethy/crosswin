@@ -142,6 +142,23 @@
   .ev .loc{font-family:var(--mono); font-size:12px; color:var(--faint); margin-top:1px}
   .empty{padding:22px; color:var(--muted); font-size:14px}
 
+  .preview{padding:16px 22px; border-top:1px solid var(--hairline)}
+  .preview-bar{display:flex; align-items:center; gap:12px; margin-bottom:12px}
+  .preview-bar .t{font-weight:600; font-size:14px}
+  .preview-bar .btn{padding:7px 14px; font-size:13.5px}
+  .shot{display:flex; flex-direction:column; gap:12px}
+  .shot figure{margin:0}
+  .shot img{max-width:100%; display:block; border:1px solid var(--hairline); border-radius:10px; background:var(--paper)}
+  .shot figcaption{font-size:12px; color:var(--faint); margin-top:5px; font-family:var(--mono)}
+  .preview .hint{font-size:13.5px; color:var(--muted)}
+  details.onscreen{margin-top:14px}
+  details.onscreen summary{cursor:pointer; font-size:13.5px; color:var(--accent-ink); font-weight:550}
+  .ctrl{display:flex; gap:8px; align-items:baseline; padding:5px 0; font-size:13.5px; border-top:1px solid var(--hairline)}
+  .ctrl:first-of-type{border-top:0; margin-top:8px}
+  .ctrl .role{color:var(--faint); font-size:12px; min-width:84px}
+  .ctrl .nm{font-weight:500}
+  .ctrl .vv{color:var(--muted); font-family:var(--mono); font-size:12.5px}
+
   footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--hairline); color:var(--faint); font-size:13px}
   footer a{color:var(--accent-ink)}
 </style>
@@ -355,13 +372,16 @@ function openRunPanel(project){
   stop.onclick = async()=>{ stop.disabled=true; await api("/api/stop",{method:"POST"}); };
   top.append(stop);
   panel.append(top);
+  const preview = el("div","preview"); preview.id="preview"; preview.hidden = true;
+  panel.append(preview);
+
   const evbox = el("div","events"); evbox.id="events";
   evbox.append(el("div","empty","Building and launching — this can take a minute the first time."));
   panel.append(evbox);
   box.append(panel);
   box.scrollIntoView({behavior:"smooth", block:"nearest"});
 
-  let lastSeq = 0, firstEvents = true;
+  let lastSeq = 0, firstEvents = true, previewShown = false;
   clearInterval(runPolling);
   runPolling = setInterval(async()=>{
     let s; try{ s = await api("/api/session"); }catch{ return; }
@@ -372,6 +392,7 @@ function openRunPanel(project){
       if(s.warnings) bits.push(s.warnings+" note"+(s.warnings>1?"s":""));
       $("#p-sub").textContent = bits.join(" · ");
       if(s.state==="running" || s.state==="exited" || s.state==="error") $(".spinner")?.remove();
+      if(s.state==="running" && !previewShown){ previewShown = true; buildPreview(); refreshPreview(); }
     }
     let ev; try{ ev = await api("/api/events?since="+lastSeq); }catch{ return; }
     const list = (ev.events||[]);
@@ -381,6 +402,65 @@ function openRunPanel(project){
       $("#events").scrollTop = $("#events").scrollHeight;
     }
   }, 1200);
+}
+
+function buildPreview(){
+  const box = $("#preview");
+  box.hidden = false;
+  box.innerHTML = "";
+  const bar = el("div","preview-bar");
+  bar.append(el("div","t","Preview"));
+  const refresh = el("button","btn ghost","Refresh"); refresh.type="button";
+  refresh.onclick = ()=>refreshPreview();
+  bar.append(refresh);
+  box.append(bar);
+  const shot = el("div","shot"); shot.id="shot";
+  shot.append(el("div","hint","Taking a picture of the app…"));
+  box.append(shot);
+  const det = el("details","onscreen"); det.id="onscreen";
+  const sum = el("summary",null,"What's on screen");
+  sum.onclick = ()=>{ setTimeout(inspectUi, 0); };
+  det.append(sum);
+  box.append(det);
+}
+
+async function refreshPreview(){
+  const shot = $("#shot"); if(!shot) return;
+  let data; try{ data = await api("/api/snap",{method:"POST"}); }catch{ return; }
+  shot.innerHTML = "";
+  if(data.error || !data.images || !data.images.length){
+    shot.append(el("div","hint", data.error || "No preview available yet."));
+    return;
+  }
+  for(const im of data.images){
+    const fig = el("figure");
+    const img = el("img"); img.src = im.dataUri; img.alt = im.title||"App window";
+    fig.append(img);
+    if(im.title) fig.append(el("figcaption", im.title + (im.size?"  "+im.size:"")));
+    shot.append(fig);
+  }
+}
+
+async function inspectUi(){
+  const det = $("#onscreen"); if(!det) return;
+  det.querySelectorAll(".ctrl,.uihint").forEach(n=>n.remove());
+  let data; try{ data = await api("/api/ui"); }catch{ return; }
+  if(data.error || !data.nodes){ det.append(hint(data.error||"Couldn't read the controls.")); return; }
+  const named = data.nodes.filter(n=>n.name || n.value);
+  if(!named.length){ det.append(hint("No labelled controls reported.")); return; }
+  for(const n of named.slice(0,40)){
+    const row = el("div","ctrl");
+    row.append(el("span","role", friendlyRole(n.role)));
+    row.append(el("span","nm", n.name||"(unnamed)"));
+    if(n.value!=null && n.value!=="") row.append(el("span","vv", String(n.value)));
+    det.append(row);
+  }
+}
+function hint(t){ const d=el("div","hint uihint",t); return d; }
+function friendlyRole(r){
+  const map={Button:"button",Text:"text",Edit:"text box",CheckBox:"checkbox",RadioButton:"option",
+    ComboBox:"dropdown",ListItem:"list item",TabItem:"tab",MenuItem:"menu",Hyperlink:"link",Image:"image",Slider:"slider"};
+  return map[r]||r.toLowerCase();
 }
 
 function stateLabel(state, project){

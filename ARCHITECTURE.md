@@ -205,6 +205,9 @@ crosswin gui [--port N] [--no-open]
                        the background (bash -lc … >> gui-run.log); it writes the shared session files.
     GET  /api/session  reads the current session.json (state, counts) — the GUI polls this while an app runs.
     GET  /api/events   reads events.jsonl (?since=&level=) — build errors/exceptions with file:line in the panel.
+    POST /api/snap     runs `crosswin snap` as a subprocess, returns each window PNG inline as a data URI →
+                       the GUI's live Preview (so a non-developer never hunts for the Wine window).
+    GET  /api/ui       runs `crosswin ui --json`, returns the control tree → the "What's on screen" list.
     POST /api/stop     Commands.Stop(env); GET /api/recent → recent folders (CROSSWIN_HOME/gui/recent.json).
 ```
 The GUI is a thin presentation layer: it adds no capability the CLI/engine lacks and never bypasses the honest
