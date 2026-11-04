@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using CrossWin.Mobile;
 
 namespace CrossWin;
 
@@ -110,16 +111,43 @@ public static class Gui
 
     private static JsonObject Check(HostEnv env, JsonObject body)
     {
-        string path = (body["path"]?.ToString() ?? "").Trim();
-        if (path.Length == 0) return new JsonObject { ["error"] = "Type the folder of the app you want to run." };
-        path = ExpandHome(path);
-        if (!File.Exists(path) && !Directory.Exists(path))
+        string raw = (body["path"]?.ToString() ?? "").Trim();
+        if (raw.Length == 0) return new JsonObject { ["error"] = "Type the folder (or web address) of the app you want to run." };
+
+        // A web address needs no filesystem; everything else is a path on disk.
+        bool isUrl = System.Text.RegularExpressions.Regex.IsMatch(raw, @"^https?://");
+        string path = isUrl ? raw : ExpandHome(raw);
+        if (!isUrl && !File.Exists(path) && !Directory.Exists(path))
             return new JsonObject { ["error"] = $"There's nothing at \"{path}\". Check the folder path and try again." };
 
-        var files = ProjectInspector.FindProjects(path);
-        if (files.Count == 0)
-            return new JsonObject { ["error"] = "That folder doesn't contain a Windows app project (no .csproj). Pick the folder that holds the app's source code." };
+        // 1) Windows desktop apps (the core mission) win when present.
+        if (!isUrl)
+        {
+            var files = ProjectInspector.FindProjects(path);
+            var apps = files.Select(ProjectInspector.Inspect).Where(p => p.IsApp && p.Ui != UiFramework.None).ToList();
+            if (files.Count > 0) return DesktopResult(path, files, apps);
+        }
 
+        // 2) Mobile (Flutter / React Native / Android) — pure detection, nothing is built or launched.
+        //    Only when THIS folder holds a project marker, so detection never escalates to an unrelated git
+        //    root (which would e.g. find a sibling Android module for a plain static web folder).
+        string[] mobileMarkers = { "pubspec.yaml", "package.json", "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts" };
+        if (!isUrl && Directory.Exists(path) && mobileMarkers.Any(m => File.Exists(Path.Combine(path, m))))
+        {
+            try { return MobileResult(MobileProject.Detect(path), path); }
+            catch (CrossWinException) { /* not a mobile project; try web */ }
+        }
+
+        // 3) Web (a URL, an .html file, a static folder, or a dev-server project).
+        try { return WebResult(env, Web.WebProject.Resolve(path, null, launchServer: false), path); }
+        catch (CrossWinException)
+        {
+            return new JsonObject { ["error"] = "CrossWin didn't recognise an app here. Point it at a folder with a Windows app (.csproj), a Flutter/React Native app, or a website (a folder, an .html file, or a web address)." };
+        }
+    }
+
+    private static JsonObject DesktopResult(string path, IReadOnlyList<string> files, List<ProjectInfo> apps)
+    {
         string baseDir = Directory.Exists(path) ? path : Path.GetDirectoryName(path)!;
         var projects = new JsonArray();
         foreach (string file in files)
@@ -127,45 +155,113 @@ public static class Gui
             var info = ProjectInspector.Inspect(file);
             var a = Assessment.For(info);
             bool runnable = info.IsApp && info.Ui != UiFramework.None && a.Level != SupportLevel.Unsupported;
+            var spec = new JsonArray();
+            if (info.IsApp && info.Ui != UiFramework.None)
+            {
+                spec.Add(SpecItem("Kind", UiName(info.Ui)));
+                spec.Add(SpecItem("Needs", FriendlyRuntime(info)));
+                spec.Add(SpecItem("Build", info.Platform == "AnyCPU" ? "Any (64-bit)" : info.Platform));
+            }
             projects.Add(new JsonObject
             {
+                ["type"] = "desktop",
+                ["runKind"] = "desktop",
                 ["name"] = info.Name,
                 ["rel"] = Path.GetRelativePath(baseDir, file),
-                ["outputType"] = info.OutputType,
                 ["isApp"] = info.IsApp,
-                ["sdkStyle"] = info.SdkStyle,
-                ["ui"] = info.Ui.ToString(),
-                ["frameworks"] = new JsonArray(info.TargetFrameworks.Select(t => (JsonNode?)t).ToArray()),
-                ["chosenFramework"] = info.ChosenTfm,
-                ["dotnet"] = FriendlyRuntime(info),
-                ["platform"] = info.Platform,
-                ["packages"] = new JsonArray(info.Packages.Select(p => (JsonNode?)p).ToArray()),
+                ["spec"] = spec,
                 ["level"] = a.Level.ToString(),
                 ["verdict"] = VerdictWord(a.Level, info),
                 ["summary"] = FriendlySummary(a, info),
-                ["detail"] = a.Summary,
                 ["risks"] = new JsonArray(info.Findings.Select(f => (JsonNode?)FriendlyRisk(f)).ToArray()),
                 ["runnable"] = runnable,
             });
         }
-        // The thing a non-developer actually wants: one app to run. Surface the best candidate.
-        var apps = files.Select(ProjectInspector.Inspect).Where(p => p.IsApp && p.Ui != UiFramework.None).ToList();
-        return new JsonObject
-        {
-            ["path"] = path,
-            ["projects"] = projects,
-            ["appCount"] = apps.Count,
-            ["defaultApp"] = apps.Count == 1 ? apps[0].Name : null,
-        };
+        return new JsonObject { ["path"] = path, ["type"] = "desktop", ["projects"] = projects, ["appCount"] = apps.Count, ["defaultApp"] = apps.Count == 1 ? apps[0].Name : null };
     }
+
+    private static JsonObject MobileResult(MobileProject m, string path)
+    {
+        bool ios = m.Kind == MobileKind.IosNative;
+        bool runnable = !ios && m.HasAndroid;
+        var spec = new JsonArray { SpecItem("Kind", m.KindLabel) };
+        if (m.HasAndroid || !ios) spec.Add(SpecItem("Runs on", "an Android phone or emulator"));
+        string verdict = ios ? "Needs a Mac" : runnable ? "Needs a device" : "Not ready";
+        string summary = ios
+            ? "This is an iOS app. Apple's tools are needed to build and sign it, so CrossWin can't run it here."
+            : runnable
+                ? $"This is a {m.KindLabel} app. CrossWin can build and run it — connect an Android phone (and allow it on the phone) or start an emulator, then run it."
+                : $"This is a {m.KindLabel} app but it has no Android target yet. Add one (the notes below say how), then it can run.";
+        var project = new JsonObject
+        {
+            ["type"] = "mobile",
+            ["runKind"] = "mobile",
+            ["name"] = m.Name,
+            ["isApp"] = true,
+            ["spec"] = spec,
+            ["level"] = runnable ? "Experimental" : "Unsupported",
+            ["verdict"] = verdict,
+            ["summary"] = summary,
+            ["risks"] = new JsonArray(m.Notes.Select(n => (JsonNode?)n).ToArray()),
+            ["runnable"] = runnable,
+        };
+        return new JsonObject { ["path"] = path, ["type"] = "mobile", ["projects"] = new JsonArray { project }, ["appCount"] = runnable ? 1 : 0, ["defaultApp"] = m.Name };
+    }
+
+    private static JsonObject WebResult(HostEnv env, Web.WebProject w, string path)
+    {
+        bool needsNode = w.Kind == "dev-server";
+        bool nodeReady = HostEnv.FindOnPath("node") != null;
+        var spec = new JsonArray { SpecItem("Kind", WebKindLabel(w.Kind)) };
+        spec.Add(SpecItem("Opens", w.Kind == "url" ? w.Url : w.Kind == "dev-server" ? "its own dev server" : (w.Name + (w.Kind == "file" ? ".html" : "/"))));
+        bool runnable = !needsNode || nodeReady;
+        string verdict = runnable ? "Ready to run" : "Needs Node.js";
+        string summary = w.Kind switch
+        {
+            "url" => "This is a web address. CrossWin opens it in a browser and watches for errors, failed requests and console messages.",
+            "file" or "static" => "This is a local web page. CrossWin opens it in a browser (no server needed) and watches for errors and failed requests.",
+            _ when nodeReady => "This is a web app with its own dev server. CrossWin starts the server and opens it in a browser, watching for errors, failed requests and console messages.",
+            _ => "This is a web app that needs Node.js to start its dev server. Install Node.js, or start the server yourself and give CrossWin the address.",
+        };
+        var risks = new JsonArray();
+        if (needsNode && !nodeReady) risks.Add("Node.js isn't installed, so CrossWin can't start this app's dev server here.");
+        var project = new JsonObject
+        {
+            ["type"] = "web",
+            ["runKind"] = "web",
+            ["name"] = w.Name,
+            ["isApp"] = true,
+            ["spec"] = spec,
+            ["level"] = runnable ? "Supported" : "Experimental",
+            ["verdict"] = verdict,
+            ["summary"] = summary,
+            ["risks"] = risks,
+            ["runnable"] = runnable,
+        };
+        return new JsonObject { ["path"] = isUrlOrFile(path, w), ["type"] = "web", ["projects"] = new JsonArray { project }, ["appCount"] = runnable ? 1 : 0, ["defaultApp"] = w.Name };
+    }
+
+    private static string isUrlOrFile(string path, Web.WebProject w) => w.Kind == "url" ? w.Url : path;
+
+    private static JsonObject SpecItem(string k, string v) => new() { ["k"] = k, ["v"] = v };
+
+    private static string WebKindLabel(string kind) => kind switch
+    {
+        "url" => "Website", "file" => "Local web page", "static" => "Local website", "dev-server" => "Web app (dev server)", _ => "Website",
+    };
 
     private static JsonObject RunApp(HostEnv env, string repo, JsonObject body)
     {
-        string path = ExpandHome((body["path"]?.ToString() ?? "").Trim());
+        string raw = (body["path"]?.ToString() ?? "").Trim();
         string? project = body["project"]?.ToString();
-        if (path.Length == 0 || (!File.Exists(path) && !Directory.Exists(path)))
+        string runKind = body["runKind"]?.ToString() ?? "desktop";
+        bool isUrl = System.Text.RegularExpressions.Regex.IsMatch(raw, @"^https?://");
+        string path = isUrl ? raw : ExpandHome(raw);
+        if (path.Length == 0 || (!isUrl && !File.Exists(path) && !Directory.Exists(path)))
             return new JsonObject { ["error"] = "Pick an app to run first." };
-        if (env.Wine == null || !env.PrefixReady || !File.Exists(env.AgentDll))
+
+        // Only the Windows desktop backend needs Wine + the agent; web/mobile have their own prerequisites.
+        if (runKind == "desktop" && (env.Wine == null || !env.PrefixReady || !File.Exists(env.AgentDll)))
             return new JsonObject { ["error"] = "CrossWin isn't set up yet.", ["needsSetup"] = true, ["setupCommand"] = "./crosswin setup" };
 
         string wrapper = Path.Combine(repo, "crosswin");
@@ -174,10 +270,18 @@ public static class Gui
 
         Remember(env, path, project);
 
-        // Spawn the existing attached runner in the background; it writes the shared session files that the
-        // GUI then polls. Redirect to a log via a shell so no pipe needs draining and the child outlives us.
-        var cmd = new StringBuilder("exec ").Append(Sh(wrapper)).Append(" run ").Append(Sh(path));
-        if (!string.IsNullOrEmpty(project)) cmd.Append(" --project ").Append(Sh(project));
+        // Spawn the existing attached runner for this backend in the background; it writes the shared session
+        // files the GUI then polls. Redirect to a log via a shell so no pipe needs draining and it outlives us.
+        var cmd = new StringBuilder("exec ").Append(Sh(wrapper));
+        switch (runKind)
+        {
+            case "web": cmd.Append(" web run ").Append(Sh(path)); break;
+            case "mobile": cmd.Append(" mobile run ").Append(Sh(path)); break;
+            default:
+                cmd.Append(" run ").Append(Sh(path));
+                if (!string.IsNullOrEmpty(project)) cmd.Append(" --project ").Append(Sh(project));
+                break;
+        }
         string log = Path.Combine(env.Home, "gui-run.log");
         cmd.Append(" >> ").Append(Sh(log)).Append(" 2>&1");
 
@@ -193,21 +297,35 @@ public static class Gui
     private static JsonObject Snap(HostEnv env)
     {
         if (!File.Exists(env.SessionFile)) return new JsonObject { ["error"] = "No app is running yet." };
-        var (exit, stdout, stderr) = RunCli(env, "snap");
+        string kind = SessionKind(env);
         var images = new JsonArray();
+
+        if (kind is "web" or "android")
+        {
+            // web/mobile write a single PNG; ask for a known path and read it back.
+            string outDir = Path.Combine(env.Home, "gui");
+            Directory.CreateDirectory(outDir);
+            string outFile = Path.Combine(outDir, $"preview-{kind}.png");
+            try { if (File.Exists(outFile)) File.Delete(outFile); } catch { }
+            var (ex, so, se) = kind == "web"
+                ? RunCli(env, "web", "snap", "--out", outFile)
+                : RunCli(env, "mobile", "snap", "--out", outFile);
+            if (File.Exists(outFile))
+            {
+                try { images.Add(ImageNode(File.ReadAllBytes(outFile), kind == "web" ? "Page" : "Screen", "")); } catch { }
+            }
+            if (images.Count > 0) return new JsonObject { ["images"] = images };
+            return new JsonObject { ["error"] = CleanCli((so + "\n" + se).Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "No preview available yet.") };
+        }
+
+        // Desktop: snap prints one tab-separated line per window, PNG path first.
+        var (exit, stdout, stderr) = RunCli(env, "snap");
         foreach (string line in stdout.Split('\n'))
         {
             string[] f = line.Trim().Split('\t');
             if (f.Length < 3 || f[0].StartsWith("ERROR") || !f[0].EndsWith(".png", StringComparison.OrdinalIgnoreCase)) continue;
             if (!File.Exists(f[0]) || images.Count >= 4) continue;
-            byte[] png;
-            try { png = File.ReadAllBytes(f[0]); } catch { continue; }
-            images.Add(new JsonObject
-            {
-                ["title"] = f.Length > 2 ? f[2] : "",
-                ["size"] = f.Length > 1 ? f[1] : "",
-                ["dataUri"] = "data:image/png;base64," + Convert.ToBase64String(png),
-            });
+            try { images.Add(ImageNode(File.ReadAllBytes(f[0]), f.Length > 2 ? f[2] : "", f.Length > 1 ? f[1] : "")); } catch { }
         }
         if (images.Count > 0) return new JsonObject { ["images"] = images };
         // Snap can legitimately be unavailable (GPU WPF, .NET Framework/Mono apps, app not ready yet).
@@ -215,10 +333,33 @@ public static class Gui
         return new JsonObject { ["error"] = why.Length > 0 ? CleanCli(why) : "No preview available yet — the app may still be starting, or this app can't be captured." };
     }
 
+    private static JsonObject ImageNode(byte[] png, string title, string size) => new()
+    {
+        ["title"] = title,
+        ["size"] = size,
+        ["dataUri"] = "data:image/png;base64," + Convert.ToBase64String(png),
+    };
+
+    private static string SessionKind(HostEnv env)
+    {
+        try
+        {
+            string dir = File.ReadAllText(env.SessionFile).Trim();
+            return SessionLog.ReadInfo(dir)["kind"]?.ToString() ?? "desktop";
+        }
+        catch { return "desktop"; }
+    }
+
     private static JsonObject Ui(HostEnv env)
     {
         if (!File.Exists(env.SessionFile)) return new JsonObject { ["error"] = "No app is running yet." };
-        var (exit, stdout, stderr) = RunCli(env, "ui", "--json");
+        string kind = SessionKind(env);
+        var (exit, stdout, stderr) = kind switch
+        {
+            "web" => RunCli(env, "web", "ui", "--json"),
+            "android" => RunCli(env, "mobile", "ui", "--json"),
+            _ => RunCli(env, "ui", "--json"),
+        };
         string body = stdout.Trim();
         if (exit != 0 || body.Length == 0 || body.StartsWith("ERROR"))
             return new JsonObject { ["error"] = CleanCli((body.Length > 0 ? body : stderr).Split('\n').FirstOrDefault() ?? "Couldn't read the app's controls.") };

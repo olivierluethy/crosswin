@@ -180,11 +180,11 @@
 
   <main>
     <h1 id="headline">Run a Windows app here</h1>
-    <p class="lede">Point CrossWin at a project folder. It checks whether the app can run on this computer — honestly — and then runs it. No Windows needed.</p>
+    <p class="lede">Point CrossWin at a Windows, web, or Flutter app. It checks — honestly — whether it can run on this computer, then runs it. No Windows needed.</p>
 
     <form class="field" id="form" autocomplete="off">
-      <input id="path" name="path" placeholder="Folder of the app you want to run" spellcheck="false"
-             aria-label="Project folder path" value="">
+      <input id="path" name="path" placeholder="Folder or web address of the app you want to run" spellcheck="false"
+             aria-label="Project folder or web address" value="">
       <button class="btn" id="check" type="submit">Check it</button>
     </form>
     <div class="recent" id="recent" hidden><b>Recent</b></div>
@@ -271,12 +271,12 @@ function clearResults(){ $("#results").innerHTML=""; $("#result-head").hidden = 
 
 function renderResults(data){
   const host = $("#result-head");
-  const apps = data.projects.filter(p=>p.isApp && p.ui!=="None");
-  const others = data.projects.filter(p=>!(p.isApp && p.ui!=="None"));
+  const apps = data.projects.filter(p=>p.isApp);
+  const others = data.projects.filter(p=>!p.isApp);
   const ordered = [...apps, ...others];
   host.hidden = false;
   host.textContent = data.appCount > 1
-    ? `${data.appCount} apps found in this folder — pick the one to run`
+    ? `${data.appCount} apps found — pick the one to run`
     : data.projects.length > 1 ? "What's in this folder" : "";
   const results = $("#results");
   ordered.forEach((p,i)=> results.append(verdictCard(p, i>0 && (apps.length>1 || others.length))));
@@ -296,11 +296,9 @@ function verdictCard(p, secondary){
 
   card.append(el("div","v-summary", p.summary));
 
-  if(p.isApp && p.ui!=="None"){
+  if(p.spec && p.spec.length){
     const spec = el("div","spec");
-    spec.append(specItem("Kind", uiLabel(p.ui)));
-    spec.append(specItem("Needs", p.dotnet));
-    spec.append(specItem("Build", p.platform==="AnyCPU" ? "Any (64-bit)" : p.platform));
+    for(const s of p.spec) spec.append(specItem(s.k, s.v));
     card.append(spec);
   }
 
@@ -315,7 +313,6 @@ function verdictCard(p, secondary){
 }
 
 function specItem(k,v){ const s=el("div","s"); s.append(el("div","k",k)); s.append(el("div","val",v)); return s; }
-function uiLabel(ui){ return ui==="Wpf"?"WPF":ui==="WinForms"?"Windows Forms":ui==="Both"?"WPF + Forms":ui; }
 
 function riskRow(text){
   const row = el("div","risk");
@@ -326,28 +323,27 @@ function riskRow(text){
 
 function actions(p){
   const box = el("div","v-actions");
-  if(p.runnable){
-    if(HOST && HOST.ready){
-      const run = el("button","btn","Run this app");
-      run.onclick = ()=>runApp(p.name);
-      box.append(run);
-      if(p.level==="Experimental") box.append(el("span","v-note","It should start — keep the notes above in mind."));
-    }else{
-      box.append(el("span","v-note","Almost there: CrossWin needs a one-time setup before it can run apps."));
-      const code = el("code",null,(HOST&&HOST.setupCommand)||"./crosswin setup");
-      const line = el("div","v-note"); line.append(span("In your terminal, run "), code, span(" once."));
-      box.append(line);
-    }
+  const needsSetup = p.runKind==="desktop" && HOST && !HOST.ready; // only Windows apps need Wine setup
+  if(p.runnable && !needsSetup){
+    const run = el("button","btn","Run this app");
+    run.onclick = ()=>runApp(p.name, p.runKind);
+    box.append(run);
+    if(p.level==="Experimental") box.append(el("span","v-note","It should start — keep the notes above in mind."));
+  }else if(p.runnable && needsSetup){
+    box.append(el("span","v-note","Almost there: CrossWin needs a one-time setup before it can run Windows apps."));
+    const code = el("code",null,(HOST&&HOST.setupCommand)||"./crosswin setup");
+    const line = el("div","v-note"); line.append(span("In your terminal, run "), code, span(" once."));
+    box.append(line);
   }else{
     box.append(el("span","v-note", p.isApp===false
       ? "This is part of the app's code, not something to open on its own."
-      : "CrossWin can't run this project as a desktop window."));
+      : "CrossWin can't run this one yet — see the reason above."));
   }
   return box;
 }
 
-async function runApp(project){
-  const body = {path:lastCheck.path, project};
+async function runApp(project, runKind){
+  const body = {path:lastCheck.path, project, runKind:runKind||"desktop"};
   let data;
   try{ data = await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); }
   catch{ data = {error:"Couldn't reach CrossWin to start the app."}; }
@@ -391,7 +387,7 @@ function openRunPanel(project){
       if(s.errors) bits.push(s.errors+" error"+(s.errors>1?"s":""));
       if(s.warnings) bits.push(s.warnings+" note"+(s.warnings>1?"s":""));
       $("#p-sub").textContent = bits.join(" · ");
-      if(s.state==="running" || s.state==="exited" || s.state==="error") $(".spinner")?.remove();
+      if(!(s.state==="building" || s.state==="starting")) $(".spinner")?.remove();
       if(s.state==="running" && !previewShown){ previewShown = true; buildPreview(); refreshPreview(); }
     }
     let ev; try{ ev = await api("/api/events?since="+lastSeq); }catch{ return; }
@@ -468,7 +464,9 @@ function stateLabel(state, project){
     case "building": return "Building "+project+"…";
     case "starting": return "Starting "+project+"…";
     case "running": return project+" is running";
-    case "exited": return project+" closed";
+    case "exited": case "stopped": case "app-not-running": return project+" closed";
+    case "build-failed": return project+" didn't build";
+    case "device-disconnected": return "Device disconnected";
     case "error": return project+" hit a problem";
     default: return project;
   }

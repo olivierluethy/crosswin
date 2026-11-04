@@ -199,15 +199,20 @@ crosswin gui [--port N] [--no-open]
                     rationale is Gui/design-notes.md.
   API (all JSON):
     GET  /api/host     host OS/arch + honest setup readiness (wine/prefix/agent) → drives the status bar
-    POST /api/check    {path} → ProjectInspector + Assessment per project, mapped to PLAIN LANGUAGE (verdict word,
-                       friendly summary, friendly risks, runnable flag). Pure host-side; no Wine, no app launch.
-    POST /api/run      {path,project} → spawns the existing attached `crosswin run` via the ./crosswin wrapper in
-                       the background (bash -lc … >> gui-run.log); it writes the shared session files.
+    POST /api/check    {path} → auto-detects the backend and maps it to PLAIN LANGUAGE: a Windows app
+                       (ProjectInspector + Assessment; wins when present), a mobile app (MobileProject.Detect,
+                       guarded by a folder-local marker so it never escalates to an unrelated git root), or a
+                       website (WebProject.Resolve with launchServer:false). One shape for all: {type, projects:
+                       [{name, spec[], verdict, summary, risks, runnable, runKind}]}. Pure host-side; no launch.
+    POST /api/run      {path,project,runKind} → spawns the existing attached runner for that backend via the
+                       ./crosswin wrapper in the background (run | web run | mobile run; bash -lc … >> gui-run.log);
+                       it writes the shared session files. Only runKind=desktop requires Wine setup.
     GET  /api/session  reads the current session.json (state, counts) — the GUI polls this while an app runs.
     GET  /api/events   reads events.jsonl (?since=&level=) — build errors/exceptions with file:line in the panel.
-    POST /api/snap     runs `crosswin snap` as a subprocess, returns each window PNG inline as a data URI →
-                       the GUI's live Preview (so a non-developer never hunts for the Wine window).
-    GET  /api/ui       runs `crosswin ui --json`, returns the control tree → the "What's on screen" list.
+    POST /api/snap     runs the backend's snapshot (desktop `snap` / `web snap --out` / `mobile snap --out`,
+                       picked by the session kind), returns each window PNG inline as a data URI → the GUI's
+                       live Preview (so a non-developer never hunts for the app window).
+    GET  /api/ui       runs the backend's `ui --json` (desktop/web/mobile) → the "What's on screen" list.
     POST /api/stop     Commands.Stop(env); GET /api/recent → recent folders (CROSSWIN_HOME/gui/recent.json).
 ```
 The GUI is a thin presentation layer: it adds no capability the CLI/engine lacks and never bypasses the honest
