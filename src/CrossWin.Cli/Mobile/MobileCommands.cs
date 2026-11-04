@@ -169,16 +169,16 @@ public static class MobileCommands
                 var actions = a.Skip(1).ToList();
                 var results = new List<string>();
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                try
+                try { results = t.InputBatch(actions); }
+                catch (AndroidTarget.BatchFailure ex)
                 {
-                    foreach (string cmd in actions) { t.Input(cmd); results.Add("ok: " + cmd); }
-                }
-                catch (CrossWinException ex)
-                {
-                    results.Add("ERROR " + ex.Message.Split('\n')[0]);
+                    results = ex.Done.Append("ERROR " + ex.Message.Split('\n')[0]).ToList();
+                    foreach (string r in results) Console.WriteLine(r);
                     AndroidDiagnostics.Interaction(env, actions, results, true, sw.ElapsedMilliseconds);
-                    throw;
+                    return 1;
                 }
+                foreach (string r in results) Console.WriteLine(r);
+                Console.WriteLine($"-- {actions.Count} action(s) in {sw.ElapsedMilliseconds} ms");
                 AndroidDiagnostics.Interaction(env, actions, results, false, sw.ElapsedMilliseconds);
                 return 0;
             }

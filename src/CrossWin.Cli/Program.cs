@@ -71,4 +71,4 @@ static int Fail(string message)
     return 1;
 }
 
-public sealed class CrossWinException(string message) : Exception(message);
+public class CrossWinException(string message) : Exception(message);

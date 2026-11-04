@@ -388,6 +388,75 @@ public sealed class AndroidTarget
         if (r is { ExitCode: not 0 }) throw new CrossWinException($"'{command}' failed: {r.Output.Trim()}");
     }
 
+    /// <summary>
+    /// Runs a batch with as few adb round trips as possible: consecutive actions that need no screen reading
+    /// (tap/longpress X Y, swipe, scroll, type, key, wait) become one <c>adb shell</c> script; label actions and
+    /// wait-for read the UI tree and run on their own. Stops at the first failure. Returns one result per action.
+    /// </summary>
+    public List<string> InputBatch(IReadOnlyList<string> commands)
+    {
+        var results = new List<string>();
+        var pending = new List<(string Command, string Shell)>();
+        void FlushPending()
+        {
+            if (pending.Count == 0) return;
+            // Each step echoes a marker, so a failure is attributed to the right action.
+            string script = string.Join("; ", pending.Select((p, i) => $"{p.Shell} || {{ echo CW_FAIL_{i}; exit 1; }}")) + "; echo CW_OK";
+            var r = Shell("sh", "-c", "'" + script.Replace("'", "'\\''") + "'");
+            var fail = Regex.Match(r.Output, @"CW_FAIL_(\d+)");
+            int failed = fail.Success ? int.Parse(fail.Groups[1].Value) : r.Output.Contains("CW_OK") ? -1 : 0;
+            for (int i = 0; i < pending.Count; i++)
+            {
+                if (failed >= 0 && i == failed)
+                {
+                    string what = pending[i].Command;
+                    pending.Clear();
+                    throw new BatchFailure(results, $"'{what}' failed: {Regex.Replace(r.Output, @"CW_\w+", "").Trim()}");
+                }
+                results.Add("ok: " + pending[i].Command);
+            }
+            pending.Clear();
+        }
+        foreach (string command in commands)
+        {
+            if (ToShell(command) is { } sh) { pending.Add((command, sh)); continue; }
+            FlushPending();
+            try { Input(command); results.Add("ok: " + command); }
+            catch (CrossWinException ex) { throw new BatchFailure(results, ex.Message); }
+        }
+        FlushPending();
+        return results;
+    }
+
+    public sealed class BatchFailure(List<string> done, string message) : CrossWinException(message)
+    {
+        public List<string> Done { get; } = done;
+    }
+
+    /// <summary>Shell form of an action that does not need to read the screen, else null.</summary>
+    private static string? ToShell(string command)
+    {
+        string[] p = command.Split(' ', 2, StringSplitOptions.TrimEntries);
+        string verb = p[0].ToLowerInvariant();
+        string rest = p.Length > 1 ? p[1].Trim().Trim('"') : "";
+        string[] n = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool Ints(int count) => n.Length >= count && n.Take(count).All(x => int.TryParse(x, out _));
+        return verb switch
+        {
+            "tap" or "click" when n.Length == 2 && Ints(2) => $"input tap {n[0]} {n[1]}",
+            "longpress" when n.Length == 2 && Ints(2) => $"input swipe {n[0]} {n[1]} {n[0]} {n[1]} 800",
+            "swipe" when Ints(4) && (n.Length == 4 || (n.Length == 5 && int.TryParse(n[4], out _))) => $"input swipe {n[0]} {n[1]} {n[2]} {n[3]} {(n.Length > 4 ? n[4] : "300")}",
+            "scroll" => rest == "up" ? "input swipe 540 700 540 1700 350" : "input swipe 540 1700 540 700 350",
+            "key" when Regex.IsMatch(rest, @"^[A-Za-z0-9_]+$") => "input keyevent " + (rest.StartsWith("KEYCODE_") ? rest : "KEYCODE_" + rest.ToUpperInvariant()),
+            "wait" when int.TryParse(rest, out int ms) && ms >= 0 => $"sleep {(ms / 1000.0).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            // input text: spaces as %s; the whole script is single-quoted for the device shell, so quote per word too.
+            "type" when rest.Length > 0 => "input text " + ShellQuote(rest.Replace(" ", "%s")),
+            _ => null,
+        };
+    }
+
+    private static string ShellQuote(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$").Replace("`", "\\`") + "\"";
+
     private Proc.Result TapAt((string Label, int X, int Y) e) => Shell("input", "tap", e.X.ToString(), e.Y.ToString());
 
     private static Proc.Result? Wait(int ms) { Thread.Sleep(ms); return null; }
