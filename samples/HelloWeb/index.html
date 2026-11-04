@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrossWin Web sample</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    button { font: inherit; padding: .5rem .9rem; border-radius: .5rem; border: 1px solid #8884; cursor: pointer; margin: .25rem .25rem 0 0; }
+    #count { font-weight: 600; }
+    .hint { color: #8a8a8a; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>CrossWin Web sample</h1>
+  <p>Taps: <span id="count">0</span></p>
+
+  <!-- A normal action, plus three deliberate failures so crosswin web diagnostics can be checked. -->
+  <button id="tap">Tap me</button>
+  <button id="boom">Throw error</button>
+  <button id="warn">Log console error</button>
+  <button id="fetch">Failing fetch</button>
+
+  <p class="hint">Open with: <code>crosswin web run samples/HelloWeb --show</code>, then
+    <code>crosswin events --level warn</code>.</p>
+
+  <script>
+    let count = 0;
+    const out = document.getElementById('count');
+    document.getElementById('tap').addEventListener('click', () => { out.textContent = ++count; });
+
+    // Uncaught exception in a handler -> Runtime.exceptionThrown -> exception.unhandled
+    document.getElementById('boom').addEventListener('click', () => {
+      throw new Error('Deliberate failure: nothing to save');
+    });
+
+    // console.error -> console.error event
+    document.getElementById('warn').addEventListener('click', () => {
+      console.error('Deliberate console error: validation failed for field "email"');
+    });
+
+    // Failed network request -> network.failed / network.error
+    document.getElementById('fetch').addEventListener('click', () => {
+      fetch('/api/does-not-exist').then(r => console.log('status', r.status));
+    });
+  </script>
+</body>
+</html>

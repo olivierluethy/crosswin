@@ -162,6 +162,26 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   All pids seen are kept, so restarts still match; event timestamps are device-log times (logcat) or wall time (VM).
   Implemented, not verified yet (compile-only).
 
+## Web backend (issue #6, slice 1)
+```
+crosswin web run <url | file.html | dir>
+  Web/Browser.cs     find a Chromium-family browser (Chrome/Chromium/Edge/Brave); launch headless (or --show) with
+                     a throwaway profile + --remote-debugging-port=0; read the ws endpoint from DevToolsActivePort
+  Web/WebProject.cs  resolve the target: http(s) URL | .html/static dir -> file:// (no server) | package.json dir ->
+                     start the dev script (pnpm/yarn/bun/npm), scan output for the local URL
+  Web/Cdp.cs         minimal Chrome DevTools Protocol client over ClientWebSocket (send+await by id, dispatch events),
+                     "flatten" attach so messages carry a sessionId — same transport idea as the Dart VM-service collector
+  Web/WebDiagnostics.cs  CDP page events -> shared SessionLog (kind "web"): Runtime.consoleAPICalled -> console.*,
+                     Runtime.exceptionThrown -> exception.unhandled (source file mapped into the project), Network.
+                     loadingFailed/responseReceived(>=400) -> network.failed/error, Log.entryAdded -> browser.*
+  Web/WebCommands.cs  attached run (Ctrl-C detaches, browser left up), snap (Page.captureScreenshot), stop (close
+                     target + kill browser/dev server), inspect. Reconnect info (cdpUrl, targetId, pids) in session.json
+                     + ~/.crosswin/web/session.json, so snap/stop re-attach from a separate process.
+```
+No Node or Playwright is needed to *drive* the browser (CDP is spoken directly); a dev server still needs the app's own
+Node toolchain, while a .html file or a static folder runs with no server. Interaction (ui/input via the accessibility
+tree) and MCP tools are slice 2. Implemented, not verified yet (compile-only).
+
 ## Known gaps / open questions
 - WPF GPU path (Wine d3d9 → Vulkan → MoltenVK → Metal) not visually verified.
 - Theme fidelity: WPF picks Classic theme under Wine; real apps with explicit styles are unaffected.

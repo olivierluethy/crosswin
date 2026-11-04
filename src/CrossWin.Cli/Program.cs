@@ -35,6 +35,8 @@ if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
 
           crosswin mobile …                    Mobile apps (Flutter, React Native, Android) without
                                                Android Studio or Xcode — see 'crosswin mobile help'
+          crosswin web …                       Run a local web app (URL, .html or dev server) in a browser and
+                                               stream its console/errors/network — see 'crosswin web help'
 
         Environment: CROSSWIN_HOME (default ~/.crosswin), CROSSWIN_WINE, WINEPREFIX, WINEDEBUG
         """);
@@ -57,6 +59,7 @@ try
         "mcp" => Mcp.Serve(env, repo),
         "input" when args.Length > 1 => Commands.Input(env, args.Skip(1).ToArray()),
         "mobile" => CrossWin.Mobile.MobileCommands.Dispatch(env, args.Skip(1).ToArray()),
+        "web" => CrossWin.Web.WebCommands.Dispatch(env, args.Skip(1).ToArray()),
         _ => Fail($"Unknown or incomplete command: {string.Join(' ', args)}. Run 'crosswin help'."),
     };
 }
