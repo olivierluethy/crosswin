@@ -211,7 +211,9 @@ public static class MobileCommands
             case "stop":
             {
                 var (t, current) = Current(env, sdk);
-                // A real phone that was never reshaped keeps any display settings of its owner.
+                // Close the app so an attached live collector detaches and the phone is left idle (the emulator is
+                // killed below anyway). A real phone that was never reshaped keeps its owner's display settings.
+                try { t.Shell("am", "force-stop", current.Package); } catch (Exception) { }
                 t.Stop(resetProfile: t.IsEmulator || current.Device != "native");
                 File.Delete(SessionPath(env));
                 if (File.Exists(env.SessionFile) && File.ReadAllText(env.SessionFile).Trim() is var dir

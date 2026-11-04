@@ -54,6 +54,19 @@ public static class Mcp
                    ("project", "string", "Project name when the repository contains several apps", false),
                    ("noBuild", "boolean", "Reuse the previous build output", false)),
             (env, repo, a) => StartRun(env, Str(a, "path")!, Str(a, "project"), Flag(a, "noBuild"))),
+        new("crosswin_devices",
+            "List Android targets for a mobile run: connected phones and the CrossWin emulator with their readiness (ready, unauthorized, offline, missing), plus whether the mobile toolchain (adb, JDK, SDK, emulator) is installed.",
+            Schema(),
+            (env, repo, a) => Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "doctor" }))),
+        new("crosswin_mobile_run",
+            "Build a mobile app (Flutter, React Native, Expo, Kotlin) and launch it on the CrossWin emulator or an authorized phone, then stay attached in the background streaming diagnostics (logcat, and for Flutter the Dart VM service: framework errors, layout overflows and frame jank) into the same session. Returns when the app has launched or the build failed. Then use crosswin_ui / crosswin_input / crosswin_events / crosswin_snap, and crosswin_stop to close it.",
+            Schema(("path", "string", "Repository or app directory", true),
+                   ("device", "string", "Device profile to shape the screen to, e.g. pixel-8 (default); a real phone keeps its own screen unless set", false),
+                   ("phone", "boolean", "Use the single connected physical phone instead of the emulator", false),
+                   ("serial", "string", "Target a specific adb serial (several devices connected)", false),
+                   ("release", "boolean", "Build a release APK instead of debug", false),
+                   ("headless", "boolean", "Boot the emulator without a window", false)),
+            (env, repo, a) => StartMobileRun(env, a)),
         new("crosswin_session",
             "Current session: target identity (project, git revision, runtime), state, error/warning counts, most recent error with file:line.",
             Schema(),
@@ -134,7 +147,7 @@ public static class Mcp
                     ["protocolVersion"] = msg["params"]?["protocolVersion"]?.GetValue<string>() ?? ProtocolVersion,
                     ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
                     ["serverInfo"] = new JsonObject { ["name"] = "crosswin", ["version"] = "0.1.0" },
-                    ["instructions"] = "CrossWin runs existing WinForms/WPF apps on macOS/Linux under Wine. Typical loop: crosswin_run -> crosswin_ui -> crosswin_input (click by label, expect text) -> crosswin_events level=error -> edit source -> crosswin_run again. Prefer ui/events over screenshots.",
+                    ["instructions"] = "CrossWin runs existing WinForms/WPF desktop apps (under Wine on macOS/Linux) and mobile apps (Flutter/React Native/Kotlin on an emulator or authorized phone). Desktop loop: crosswin_run -> crosswin_ui -> crosswin_input (click by label, expect text) -> crosswin_events level=error -> edit source -> crosswin_run again. Mobile loop: crosswin_devices -> crosswin_mobile_run -> crosswin_ui -> crosswin_input (tap by label) -> crosswin_events level=warn (Flutter framework errors and layout overflows arrive live) -> crosswin_stop. crosswin_ui/input/snap/stop auto-route to whichever session (desktop or mobile) is current. Prefer ui/events over screenshots.",
                 });
             case "ping":
                 return Result(id, new JsonObject());
@@ -240,6 +253,55 @@ public static class Mcp
         bool failed = p.HasExited && p.ExitCode != 0;
         string tail = string.Join('\n', log.Split('\n').TakeLast(25));
         return (failed ? 1 : 0, $"{status}\n\n-- crosswin run output (last lines) --\n{tail}");
+    }
+
+    /// <summary>
+    /// `mobile run` stays attached (the live collector runs in the foreground), so start it as a separate crosswin
+    /// process that keeps feeding the session, and return once the app has launched or the build failed.
+    /// </summary>
+    private static (int, string) StartMobileRun(HostEnv env, JsonObject a)
+    {
+        Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" })); // clear any previous mobile session
+        string before = File.Exists(env.SessionFile) ? File.ReadAllText(env.SessionFile).Trim() : "";
+        var args = new List<string> { "mobile", "run", Str(a, "path")! };
+        if (Str(a, "device") is { } dev) { args.Add("--device"); args.Add(dev); }
+        if (Flag(a, "phone")) args.Add("--phone");
+        if (Str(a, "serial") is { } ser) { args.Add("--serial"); args.Add(ser); }
+        if (Flag(a, "release")) args.Add("--release");
+        if (Flag(a, "headless")) args.Add("--headless");
+        var psi = SelfInvocation(args);
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        var output = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+
+        var sw = Stopwatch.StartNew();
+        string? session = null;
+        while (sw.Elapsed < TimeSpan.FromMinutes(8))
+        {
+            Thread.Sleep(300);
+            if (session == null && File.Exists(env.SessionFile))
+            {
+                string now = File.ReadAllText(env.SessionFile).Trim();
+                if (now != before) session = now;
+            }
+            if (session != null)
+            {
+                var kinds = SessionLog.ReadEvents(session).Select(e => e["kind"]?.ToString()).ToHashSet();
+                if (kinds.Contains("app.launch") || kinds.Contains("build.failed") || kinds.Contains("build.error")) break;
+            }
+            if (p.HasExited) break; // --detach was not passed, so an early exit means the build/launch failed
+        }
+        string log;
+        lock (output) log = output.ToString();
+        var (_, status) = Capture(() => Commands.SessionStatus(env, new[] { "--json" }));
+        bool launched = session != null && SessionLog.ReadEvents(session).Any(e => e["kind"]?.ToString() == "app.launch");
+        string tail = string.Join('\n', log.Split('\n').TakeLast(25));
+        return (launched ? 0 : 1, $"{status}\n\n-- crosswin mobile run output (last lines) --\n{tail}");
     }
 
     private static ProcessStartInfo SelfInvocation(IEnumerable<string> args)

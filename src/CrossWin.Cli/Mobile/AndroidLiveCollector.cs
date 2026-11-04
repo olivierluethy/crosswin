@@ -274,6 +274,8 @@ public sealed partial class AndroidLiveCollector
         _session.SetInfo(o =>
         {
             o.Remove("liveCollector");
+            // Don't clobber a terminal state another command (e.g. `mobile stop`) already set.
+            if (o["state"]?.ToString() is not ("running" or null)) return;
             if (reason == "exited") { o["state"] = "app-not-running"; o["endedAt"] = DateTime.UtcNow.ToString("O"); }
             else if (reason == "device-disconnected") o["state"] = "device-disconnected";
         });
