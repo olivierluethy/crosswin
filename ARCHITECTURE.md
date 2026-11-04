@@ -213,6 +213,9 @@ crosswin gui [--port N] [--no-open]
                        picked by the session kind), returns each window PNG inline as a data URI → the GUI's
                        live Preview (so a non-developer never hunts for the app window).
     GET  /api/ui       runs the backend's `ui --json` (desktop/web/mobile) → the "What's on screen" list.
+    GET  /api/devices  AndroidTarget.All over AndroidSdk → connected phones/emulator with state + plain-language
+                       StateHelp; the mobile card's target picker (never bypasses the phone's trust prompt).
+                       RunApp passes the choice through as --phone/--serial, and web's toggle as --show.
     POST /api/stop     Commands.Stop(env); GET /api/recent → recent folders (CROSSWIN_HOME/gui/recent.json).
 ```
 The GUI is a thin presentation layer: it adds no capability the CLI/engine lacks and never bypasses the honest

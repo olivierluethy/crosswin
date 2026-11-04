@@ -117,7 +117,23 @@
   .risk svg{flex:0 0 auto; margin-top:2px; color:var(--limits)}
 
   .v-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:16px 22px 22px}
+  .v-actions.col{flex-direction:column; align-items:stretch}
   .v-note{font-size:13.5px; color:var(--muted)}
+  .targets{display:flex; flex-direction:column; gap:8px; margin-bottom:4px}
+  .targets .lbl{font-size:12px; color:var(--faint); margin-bottom:2px}
+  .target{display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--hairline);
+    border-radius:10px; cursor:pointer; background:var(--card)}
+  .target.sel{border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent)}
+  .target.disabled{cursor:default; opacity:.85; background:var(--paper)}
+  .target .pick{width:16px; height:16px; border-radius:50%; border:2px solid var(--hairline-strong); flex:0 0 auto}
+  .target.sel .pick{border-color:var(--accent); background:var(--accent); box-shadow:inset 0 0 0 3px var(--card)}
+  .target .who{flex:1; min-width:0}
+  .target .who .nm{font-weight:550; font-size:14px}
+  .target .who .st{font-size:12.5px; color:var(--muted)}
+  .target .badge{font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; background:var(--ready-bg); color:var(--ready)}
+  .target .badge.wait{background:var(--limits-bg); color:var(--limits)}
+  .toggle{display:flex; align-items:center; gap:8px; font-size:13.5px; color:var(--muted); cursor:pointer}
+  .run-row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:4px}
   code{font-family:var(--mono); background:var(--paper); border:1px solid var(--hairline);
     padding:2px 7px; border-radius:6px; font-size:13px}
 
@@ -322,28 +338,106 @@ function riskRow(text){
 }
 
 function actions(p){
+  if(!p.runnable){
+    const box = el("div","v-actions");
+    box.append(el("span","v-note", p.isApp===false
+      ? "This is part of the app's code, not something to open on its own."
+      : "CrossWin can't run this one yet — see the reason above."));
+    return box;
+  }
+  if(p.runKind==="mobile") return mobileActions(p);
+  if(p.runKind==="web") return webActions(p);
+
+  // desktop
   const box = el("div","v-actions");
-  const needsSetup = p.runKind==="desktop" && HOST && !HOST.ready; // only Windows apps need Wine setup
-  if(p.runnable && !needsSetup){
+  const needsSetup = HOST && !HOST.ready; // Windows apps need Wine setup
+  if(!needsSetup){
     const run = el("button","btn","Run this app");
-    run.onclick = ()=>runApp(p.name, p.runKind);
+    run.onclick = ()=>runApp(p.name, "desktop");
     box.append(run);
     if(p.level==="Experimental") box.append(el("span","v-note","It should start — keep the notes above in mind."));
-  }else if(p.runnable && needsSetup){
+  }else{
     box.append(el("span","v-note","Almost there: CrossWin needs a one-time setup before it can run Windows apps."));
     const code = el("code",null,(HOST&&HOST.setupCommand)||"./crosswin setup");
     const line = el("div","v-note"); line.append(span("In your terminal, run "), code, span(" once."));
     box.append(line);
-  }else{
-    box.append(el("span","v-note", p.isApp===false
-      ? "This is part of the app's code, not something to open on its own."
-      : "CrossWin can't run this one yet — see the reason above."));
   }
   return box;
 }
 
-async function runApp(project, runKind){
+function webActions(p){
+  const box = el("div","v-actions col");
+  const row = el("div","run-row");
+  const run = el("button","btn","Run this app");
+  run.onclick = ()=>runApp(p.name, "web", null, show.checked);
+  row.append(run);
+  const lab = el("label","toggle");
+  const show = el("input"); show.type="checkbox";
+  lab.append(show, span("Open the browser window too"));
+  row.append(lab);
+  box.append(row);
+  box.append(el("div","v-note","CrossWin watches the page for errors and failed requests while it runs."));
+  return box;
+}
+
+function mobileActions(p){
+  const box = el("div","v-actions col");
+  const picker = el("div","targets");
+  picker.append(el("div","lbl","Looking for a phone or emulator…"));
+  box.append(picker);
+  const row = el("div","run-row");
+  const run = el("button","btn","Run this app"); run.disabled = true;
+  row.append(run);
+  box.append(row);
+
+  let chosen = null;
+  const refresh = el("button","btn ghost","Refresh"); refresh.type="button";
+  refresh.onclick = ()=>load();
+  run.onclick = ()=> chosen && runApp(p.name, "mobile", chosen);
+  load();
+
+  async function load(){
+    let d; try{ d = await api("/api/devices"); }catch{ return; }
+    picker.innerHTML = "";
+    picker.append(el("div","lbl","Run it on"));
+    const options = [];
+    for(const dev of (d.devices||[])) options.push({id: dev.ready ? dev.serial : null, dev});
+    if(d.emulatorAvailable) options.push({id:"emulator", dev:{kind:"emulator", model:"CrossWin emulator", ready:true, state:"available"}});
+
+    const ready = options.filter(o=>o.id);
+    // Sensible default: a single ready phone, else the emulator, else first ready.
+    const phones = ready.filter(o=>o.dev.kind==="phone");
+    chosen = (phones.length===1 ? phones[0].id : null) || (ready.find(o=>o.id==="emulator")?.id) || (ready[0]?.id) || null;
+
+    for(const o of options){
+      const t = el("div","target"+(o.id?"":" disabled")+(o.id===chosen?" sel":""));
+      if(o.id){ t.onclick = ()=>{ chosen=o.id; picker.querySelectorAll(".target").forEach(n=>n.classList.remove("sel")); t.classList.add("sel"); run.disabled=false; }; }
+      t.append(el("span","pick"));
+      const who = el("div","who");
+      who.append(el("div","nm", o.dev.kind==="emulator" ? (o.dev.model||"Emulator") : (o.dev.model||"Android phone")));
+      who.append(el("div","st", o.dev.ready ? (o.dev.kind==="emulator" ? "ready to start" : "connected and allowed") : stateText(o.dev)));
+      t.append(who);
+      t.append(el("span","badge"+(o.dev.ready?"":" wait"), o.dev.ready ? "ready" : o.dev.state));
+      picker.append(t);
+      if(!o.dev.ready && o.dev.help) picker.append(el("div","v-note", o.dev.help));
+    }
+
+    if(ready.length===0){
+      const why = !d.adb ? (d.setupHint || "The Android tools aren't installed yet.")
+        : "No phone or emulator is ready yet. Plug in a phone with USB debugging on (and tap Allow on it), or install the emulator.";
+      picker.append(el("div","v-note", why));
+    }
+    run.disabled = !chosen;
+    picker.append(refresh);
+  }
+  return box;
+}
+function stateText(dev){ return dev.kind==="phone" ? ("phone — "+dev.state) : dev.state; }
+
+async function runApp(project, runKind, device, show){
   const body = {path:lastCheck.path, project, runKind:runKind||"desktop"};
+  if(device) body.device = device;
+  if(show) body.show = true;
   let data;
   try{ data = await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); }
   catch{ data = {error:"Couldn't reach CrossWin to start the app."}; }

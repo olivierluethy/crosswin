@@ -71,6 +71,7 @@ public static class Gui
         if (path == "/api/session" && method == "GET") { Send(ctx, 200, Json(SessionStatus(env))); return; }
         if (path == "/api/events" && method == "GET") { Send(ctx, 200, Json(EventsStatus(env, ctx.Request))); return; }
         if (path == "/api/recent" && method == "GET") { Send(ctx, 200, Json(new JsonObject { ["recent"] = Recent(env) })); return; }
+        if (path == "/api/devices" && method == "GET") { Send(ctx, 200, Json(Devices(env))); return; }
         if (path == "/api/check" && method == "POST") { Send(ctx, 200, Json(Check(env, Body(ctx)))); return; }
         if (path == "/api/run" && method == "POST") { Send(ctx, 200, Json(RunApp(env, repo, Body(ctx)))); return; }
         if (path == "/api/snap" && method == "POST") { Send(ctx, 200, Json(Snap(env))); return; }
@@ -275,8 +276,16 @@ public static class Gui
         var cmd = new StringBuilder("exec ").Append(Sh(wrapper));
         switch (runKind)
         {
-            case "web": cmd.Append(" web run ").Append(Sh(path)); break;
-            case "mobile": cmd.Append(" mobile run ").Append(Sh(path)); break;
+            case "web":
+                cmd.Append(" web run ").Append(Sh(path));
+                if (string.Equals(body["show"]?.ToString(), "true", StringComparison.OrdinalIgnoreCase)) cmd.Append(" --show");
+                break;
+            case "mobile":
+                cmd.Append(" mobile run ").Append(Sh(path));
+                string? device = body["device"]?.ToString();
+                if (device == "phone") cmd.Append(" --phone");
+                else if (!string.IsNullOrEmpty(device) && device != "emulator") cmd.Append(" --serial ").Append(Sh(device));
+                break;
             default:
                 cmd.Append(" run ").Append(Sh(path));
                 if (!string.IsNullOrEmpty(project)) cmd.Append(" --project ").Append(Sh(project));
@@ -365,6 +374,37 @@ public static class Gui
             return new JsonObject { ["error"] = CleanCli((body.Length > 0 ? body : stderr).Split('\n').FirstOrDefault() ?? "Couldn't read the app's controls.") };
         try { return JsonNode.Parse(body)!.AsObject(); }
         catch { return new JsonObject { ["error"] = "Couldn't read the app's controls." }; }
+    }
+
+    private static JsonObject Devices(HostEnv env)
+    {
+        var sdk = new AndroidSdk(env);
+        bool adb = sdk.Adb != null;
+        var arr = new JsonArray();
+        if (adb)
+        {
+            foreach (var d in AndroidTarget.All(sdk))
+            {
+                bool phone = !d.Serial.StartsWith("emulator-");
+                bool ready = d.State == "device";
+                arr.Add(new JsonObject
+                {
+                    ["serial"] = d.Serial,
+                    ["kind"] = phone ? "phone" : "emulator",
+                    ["model"] = d.Model == "?" ? (phone ? "Android phone" : "emulator") : d.Model,
+                    ["state"] = d.State,
+                    ["ready"] = ready,
+                    ["help"] = ready ? null : AndroidTarget.StateHelp(d.State),
+                });
+            }
+        }
+        return new JsonObject
+        {
+            ["adb"] = adb,
+            ["emulatorAvailable"] = sdk.Emulator != null && sdk.SystemImageInstalled,
+            ["setupHint"] = adb ? null : "Run  ./crosswin mobile setup  once to install the Android tools (adb and an emulator).",
+            ["devices"] = arr,
+        };
     }
 
     private static JsonObject StopApp(HostEnv env)
