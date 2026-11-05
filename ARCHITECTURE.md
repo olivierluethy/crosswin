@@ -129,6 +129,15 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
     unhandled `InvalidOperationException` from a click → `exception.unhandled` with type, message (secret redacted),
     20 frames, top user frame file:line. Warm restart: agent ready 0.4 s, window 2.5 s (cold: 12–13 s).
   - Crash → fix → verify loop including two builds/launches: 54 s, no screenshots.
+- **E16 third-party WinForms `inspect`** (2026-11-05, macOS arm64, ewdlop/windowsformsapp @ shallow HEAD, MIT; cloned
+  into an isolated scratch dir, read-only): `./crosswin inspect` on an *unmodified* external app correctly reported
+  WinExe / legacy (non-SDK) project / .NET Framework v4.6.1 / WinForms / AnyCPU, an honest "Experimental" verdict
+  (netfx → Wine Mono), and — the point — flagged a real blocker: a `COMReference` to **AcroPDFLib/AxAcroPDFLib** (the
+  proprietary Adobe Reader PDF ActiveX control), "COM components must be registered inside the Wine prefix; CrossWin
+  does not do this." So detection generalises past the repo's own samples, and CrossWin names a proprietary COM
+  dependency it cannot satisfy instead of claiming the app would run. The `run` stage was not attempted (execution; and
+  this app's Adobe COM dependency would block it anyway) — a clean COM-free third-party app is still wanted for the
+  `run` acceptance.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
