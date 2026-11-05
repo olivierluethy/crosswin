@@ -138,6 +138,25 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   dependency it cannot satisfy instead of claiming the app would run. The `run` stage was not attempted (execution; and
   this app's Adobe COM dependency would block it anyway) — a clean COM-free third-party app is still wanted for the
   `run` acceptance.
+- **E17 multi-session concurrency & isolation** (2026-11-05, macOS arm64, host-side only — no app/Wine/browser/device
+  launched): the per-session plumbing (compile-only until now) verified against an isolated `CROSSWIN_HOME` fixture
+  holding **three concurrent sessions** — desktop, web and android — each reconstructed from its own `session.json`.
+  Evidence:
+  - **Liveness honesty.** `crosswin sessions --json` reported all three newest-first. The desktop session carried
+    `state:"running"` with a dead `runnerPid` (999999): `LiveState` downgraded it to `stopped` (`live:false`). The web
+    session's `runnerPid` pointed at a live process: it stayed `running` with `live:true`. The android session has no
+    host pid, so its `running` was kept but marked `unverified:true, live:false` — CrossWin never claims a confident
+    "running now" it cannot confirm from the host. Error/warning counts matched each session's `events.jsonl`.
+  - **Attach is pointer-only.** `crosswin attach <unique-prefix>` switched the current pointer to the desktop session
+    ("ui / events / snap / stop now act on it. This started or stopped nothing."); `sessions` then marked it `*`.
+  - **Per-session targeting is isolated.** `crosswin session --session <web-prefix>` and `events --session
+    <android-prefix>` read those sessions **without** moving the current pointer (it stayed on the attached desktop
+    session) — so one agent inspecting its own run cannot disturb another's current selection. The android read also
+    honestly re-checked the device and appended a `device.disconnected` event (its serial isn't present).
+  - **Guards.** `ResolveSession` rejected an ambiguous prefix ("matches 3 sessions"), a no-match id, and path-traversal
+    ids (`../../../../etc/passwd`, `../../../etc`) — the latter stay confined to the session root.
+  This is the "prove isolation and a readable overview before scaling" gate (#5/#6) met with real evidence; what
+  remains for true multi-agent scale is concurrent *live* runs (two browsers/devices) and an exclusive-lease scheduler.
 - **E5 capture**: cross-process PrintWindow → all-zero bitmap; Graphics.CopyFromScreen → Win32Exception under Wine
   mac driver. In-process: PrintWindow includes child controls on the mac driver but not on X11, and WPF ignores
   WM_PRINT on X11 (black). Final method: BitBlt from the window's own DC (Wine window surface) — works for WinForms
