@@ -46,21 +46,18 @@ public static class Mcp
 
     /// <summary>For the interaction tools (ui/input/snap/stop): resolve which backend to drive and, for desktop,
     /// the --session flags to pass. With no `session` arg it routes to the current session (as before). With a
-    /// `session` arg it routes to that recorded run — desktop interaction is per-session so it is driven directly;
-    /// web/mobile keep a single live connection, so a session other than the attached one is refused honestly
-    /// (the agent should crosswin_attach to it). Throws CrossWinException on a bad id or an undrivable target.</summary>
+    /// `session` arg it routes to that recorded run by id (all backends are per-session). Throws
+    /// CrossWinException on a bad id.</summary>
     private static (string Kind, string[] SessionFlags) InteractTarget(HostEnv env, JsonObject a)
     {
         string? sel = Str(a, "session");
         if (sel == null) return (SessionKind(env) ?? "desktop", Array.Empty<string>());
-        string curDir = File.Exists(env.SessionFile) ? File.ReadAllText(env.SessionFile).Trim() : "";
         string dir = Commands.ResolveSession(env, sel);
         string kind = SessionLog.ReadInfo(dir)["kind"]?.ToString() ?? "desktop";
-        // Mobile still keeps a single live adb connection, so only the attached one can be driven.
-        if (kind == "android" && dir != curDir)
-            throw new CrossWinException($"That mobile session isn't the one attached, and only one mobile session can be driven live at a time. Switch to it first with crosswin_attach session=\"{Path.GetFileName(dir)}\".");
-        // Desktop (per-session agent) and web (per-session CDP connection) can be driven by id.
-        return (kind, kind is "desktop" or "web" ? new[] { "--session", sel } : Array.Empty<string>());
+        // All backends are per-session now: desktop a per-session agent, web a per-session CDP connection, mobile
+        // a per-session adb target in the session info. (Two sessions on the *same* physical device still contend
+        // for that one device — inherent to adb — but different devices/emulators are independent.)
+        return (kind, new[] { "--session", sel });
     }
 
     private static readonly Tool[] Tools =
@@ -141,45 +138,45 @@ public static class Mcp
             "Semantic UI tree of the running app (role, name, value, toggle state, bounds in client pixels) from WPF automation peers / WinForms accessibility. Prefer this over screenshots.",
             Schema(("all", "boolean", "Include unnamed and off-screen elements", false),
                    ("json", "boolean", "Raw JSON instead of the compact text tree", false),
-                   ("session", "string", "Desktop session id/prefix to inspect instead of the current one (concurrent). Web/mobile must be the attached one.", false)),
+                   ("session", "string", "Session id/prefix to inspect instead of the current one (all backends; different devices/browsers run concurrently).", false)),
             (env, repo, a) =>
             {
                 var (kind, sf) = InteractTarget(env, a);
                 var flags = new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray();
                 return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "ui" }.Concat(flags).Concat(sf).ToArray()))
-                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
+                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }.Concat(flags).Concat(sf).ToArray()))
                     : Capture(() => Commands.Ui(env, flags.Concat(sf).ToArray()));
             }),
         new("crosswin_input",
             "Send a batch of real input actions, executed in order; stops at the first failure. Desktop: 'click <label>' or 'click X Y', 'type <text>', 'key Enter|Tab|Escape|Up|Down|…', 'wait <ms>', 'expect <text>' (element with that text appears within 3 s). Android sessions: 'tap <label>|X Y', 'longpress', 'swipe X1 Y1 X2 Y2', 'scroll down|up', 'type', 'key BACK|HOME|ENTER', 'wait', 'wait-for <text>' (expect is mapped to it), 'rotate'.",
             Schema(("actions", "string[]", "Actions, e.g. [\"click Save\", \"expect Saved\"]", true),
-                   ("session", "string", "Desktop session id/prefix to act on instead of the current one (concurrent). Web/mobile must be the attached one.", false)),
+                   ("session", "string", "Session id/prefix to act on instead of the current one (all backends; different devices/browsers run concurrently).", false)),
             (env, repo, a) =>
             {
                 var (kind, sf) = InteractTarget(env, a);
                 var actions = a["actions"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
                 return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "input" }.Concat(actions).Concat(sf).ToArray()))
-                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "input" }.Concat(actions.Select(x => x.StartsWith("expect ") ? "wait-for " + x[7..] : x)).ToArray()))
+                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "input" }.Concat(actions.Select(x => x.StartsWith("expect ") ? "wait-for " + x[7..] : x)).Concat(sf).ToArray()))
                     : Capture(() => Commands.Input(env, actions.Concat(sf).ToArray()));
             }),
         new("crosswin_snap",
             "Screenshot the app windows to PNG files (paths returned). Use for visual questions the UI tree cannot answer.",
-            Schema(("session", "string", "Desktop session id/prefix to capture instead of the current one (concurrent). Web/mobile must be the attached one.", false)),
+            Schema(("session", "string", "Session id/prefix to capture instead of the current one (all backends).", false)),
             (env, repo, a) =>
             {
                 var (kind, sf) = InteractTarget(env, a);
                 return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "snap" }.Concat(sf).ToArray()))
-                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" }))
+                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" }.Concat(sf).ToArray()))
                     : Capture(() => Commands.Snap(env, sf));
             }),
         new("crosswin_stop",
-            "Stop the running app of a session (the current one, or session=<id> for a specific desktop run; a web/mobile session must be the attached one).",
+            "Stop the running app of a session (the current one, or session=<id> for a specific run; works for desktop, web and mobile).",
             Schema(("session", "string", "Session id/prefix to stop instead of the current one", false)),
             (env, repo, a) =>
             {
                 var (kind, sf) = InteractTarget(env, a);
                 return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "stop" }.Concat(sf).ToArray()))
-                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" }))
+                    : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" }.Concat(sf).ToArray()))
                     : Capture(() => Commands.Stop(env, sf));
             }),
     };

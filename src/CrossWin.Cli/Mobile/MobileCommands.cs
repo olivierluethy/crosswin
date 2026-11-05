@@ -100,7 +100,9 @@ public static class MobileCommands
                 t.Launch(pkg, act);
                 AndroidDiagnostics.Launched(session, t, pkg, device, cursor);
                 session.Event("info", "app.started", $"am start returned after {launchClock.ElapsedMilliseconds} ms", e => e["durationMs"] = launchClock.ElapsedMilliseconds);
-                Save(env, new Session(t.Serial, pkg, act, device.Id));
+                // Record the launch activity in this session's info (serial/package/profile already set by Launched),
+                // so every mobile command can reconstruct this session's adb target by id — no shared session file.
+                session.SetInfo(o => { if (act != null) o["activity"] = act; });
                 Console.WriteLine($"Running {pkg} on {(t.IsEmulator ? "the emulator" : t.Serial)} as {device.Name} ({device.LogicalSize}).");
                 if (Opt("--snap-after") is { } s && int.TryParse(s, out int secs))
                 {
@@ -123,19 +125,22 @@ public static class MobileCommands
             }
             case "device" when a.Length > 1:
             {
-                var (t, s) = Current(env, sdk);
+                string ddir = MobileDir(env, Opt("--session"));
+                var (t, s) = Current(env, sdk, Opt("--session"));
                 var d = DeviceCatalog.Resolve(a[1]).Single();
                 if (d.Os != MobileOs.Android) throw new CrossWinException("The emulator reshapes to Android devices; iOS devices are in  crosswin mobile preview.");
                 t.ApplyProfile(d);
                 t.Launch(s.Package, s.Activity);
-                Save(env, s with { Device = d.Id });
+                new SessionLog(ddir).SetInfo(o => o["deviceProfile"] = d.Id);
                 Console.WriteLine($"Now {d.Name} ({d.LogicalSize}).");
                 return 0;
             }
             case "seed":
             {
                 AndroidTarget t;
-                Session? s = File.Exists(SessionPath(env)) ? JsonSerializer.Deserialize<Session>(File.ReadAllText(SessionPath(env))) : null;
+                Session? s = null;
+                if (Opt("--session") != null || File.Exists(env.SessionFile))
+                    try { s = LoadSession(MobileDir(env, Opt("--session"))); } catch (CrossWinException) { }
                 t = AndroidTarget.Acquire(sdk, s?.Serial, Flag("--phone"), true);
                 var seeder = new AndroidSeeder(env, t);
                 if (Flag("--reset")) { seeder.Remove(); Console.WriteLine("Test data removed."); return 0; }
@@ -156,7 +161,7 @@ public static class MobileCommands
             }
             case "ui":
             {
-                var (t, _) = Current(env, sdk);
+                var (t, _) = Current(env, sdk, Opt("--session"));
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var tree = t.Tree();
                 if (Flag("--json")) { Console.WriteLine(tree.ToJsonString(SessionLog.Json)); return 0; }
@@ -185,14 +190,18 @@ public static class MobileCommands
             }
             case "snap":
             {
-                var (t, _) = Current(env, sdk);
+                var (t, _) = Current(env, sdk, Opt("--session"));
                 Console.WriteLine(Snap(env, t, Opt("--out")));
                 return 0;
             }
             case "input" when a.Length > 1:
             {
-                var (t, _) = Current(env, sdk);
+                string idir = MobileDir(env, Opt("--session"));
+                var (t, _) = Current(env, sdk, Opt("--session"));
                 var actions = a.Skip(1).ToList();
+                int si = actions.IndexOf("--session");
+                if (si >= 0) actions.RemoveRange(si, Math.Min(2, actions.Count - si));
+                if (actions.Count == 0) throw new CrossWinException("No actions given. Example: crosswin mobile input \"tap Save\" \"wait-for Saved\"");
                 var results = new List<string>();
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 try { results = t.InputBatch(actions); }
@@ -200,24 +209,23 @@ public static class MobileCommands
                 {
                     results = ex.Done.Append("ERROR " + ex.Message.Split('\n')[0]).ToList();
                     foreach (string r in results) Console.WriteLine(r);
-                    AndroidDiagnostics.Interaction(env, actions, results, true, sw.ElapsedMilliseconds);
+                    AndroidDiagnostics.Interaction(idir, actions, results, true, sw.ElapsedMilliseconds);
                     return 1;
                 }
                 foreach (string r in results) Console.WriteLine(r);
                 Console.WriteLine($"-- {actions.Count} action(s) in {sw.ElapsedMilliseconds} ms");
-                AndroidDiagnostics.Interaction(env, actions, results, false, sw.ElapsedMilliseconds);
+                AndroidDiagnostics.Interaction(idir, actions, results, false, sw.ElapsedMilliseconds);
                 return 0;
             }
             case "stop":
             {
-                var (t, current) = Current(env, sdk);
+                string dir = MobileDir(env, Opt("--session"));
+                var (t, current) = Current(env, sdk, Opt("--session"));
                 // Close the app so an attached live collector detaches and the phone is left idle (the emulator is
                 // killed below anyway). A real phone that was never reshaped keeps its owner's display settings.
                 try { t.Shell("am", "force-stop", current.Package); } catch (Exception) { }
                 t.Stop(resetProfile: t.IsEmulator || current.Device != "native");
-                File.Delete(SessionPath(env));
-                if (File.Exists(env.SessionFile) && File.ReadAllText(env.SessionFile).Trim() is var dir
-                    && SessionLog.ReadInfo(dir)["kind"]?.ToString() == "android")
+                if (SessionLog.ReadInfo(dir)["kind"]?.ToString() == "android")
                 {
                     AndroidDiagnostics.Ingest(env, dir); // keep the last logs before the target goes away
                     var log = new SessionLog(dir);
@@ -282,18 +290,28 @@ public static class MobileCommands
 
     public sealed record Session(string Serial, string Package, string? Activity, string Device);
 
-    private static string SessionPath(HostEnv env) => Path.Combine(env.Home, "mobile", "session.json");
-
-    private static void Save(HostEnv env, Session s)
+    /// <summary>The mobile session to act on: the one named by --session &lt;id&gt; (id or unique prefix), else the
+    /// current pointer. Each mobile run records its adb target (serial, package, activity, profile) in its own
+    /// session info, so sessions on different devices can be driven independently (multi-session, #2/#5/#6).</summary>
+    private static string MobileDir(HostEnv env, string? sel)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(SessionPath(env))!);
-        File.WriteAllText(SessionPath(env), JsonSerializer.Serialize(s));
+        if (sel != null) return Commands.ResolveSession(env, sel);
+        if (!File.Exists(env.SessionFile)) throw new CrossWinException("Nothing is running: start an app with  crosswin mobile run <repo>.");
+        return File.ReadAllText(env.SessionFile).Trim();
     }
 
-    private static (AndroidTarget, Session) Current(HostEnv env, AndroidSdk sdk)
+    /// <summary>Reconstructs the adb session from its own info (written by `mobile run`).</summary>
+    private static Session? LoadSession(string dir)
     {
-        if (!File.Exists(SessionPath(env))) throw new CrossWinException("Nothing is running: start an app with  crosswin mobile run <repo>.");
-        var s = JsonSerializer.Deserialize<Session>(File.ReadAllText(SessionPath(env)))!;
+        var info = SessionLog.ReadInfo(dir);
+        if (info["kind"]?.ToString() != "android" || info["serial"] is not { } serial || info["package"] is not { } pkg) return null;
+        return new Session(serial.ToString(), pkg.ToString(), info["activity"]?.ToString(), info["deviceProfile"]?.ToString() ?? "");
+    }
+
+    private static (AndroidTarget, Session) Current(HostEnv env, AndroidSdk sdk, string? sel)
+    {
+        var s = LoadSession(MobileDir(env, sel))
+            ?? throw new CrossWinException("Nothing is running: start an app with  crosswin mobile run <repo>.");
         return (AndroidTarget.Acquire(sdk, s.Serial, false, true), s);
     }
 
