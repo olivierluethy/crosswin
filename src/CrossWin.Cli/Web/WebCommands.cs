@@ -42,10 +42,17 @@ public static class WebCommands
         {
             case "inspect": return Inspect(Target());
             case "run": return Run(env, Target(), Flag("--show"), Opt("--url"));
-            case "ui": return Ui(env, Flag("--all"), Flag("--json"));
-            case "input" when a.Length > 1: return Input(env, a.Skip(1).ToList());
-            case "snap": return Snap(env, Opt("--out"));
-            case "stop": return Stop(env);
+            case "ui": return Ui(env, WebDir(env, Opt("--session")), Flag("--all"), Flag("--json"));
+            case "input" when a.Length > 1:
+            {
+                var acts = a.Skip(1).ToList();
+                int si = acts.IndexOf("--session");
+                if (si >= 0) acts.RemoveRange(si, Math.Min(2, acts.Count - si));
+                if (acts.Count == 0) throw new CrossWinException("No actions given. Example: crosswin web input \"click Save\" \"expect Saved\"");
+                return Input(env, WebDir(env, Opt("--session")), acts);
+            }
+            case "snap": return Snap(env, WebDir(env, Opt("--session")), Opt("--out"));
+            case "stop": return Stop(env, WebDir(env, Opt("--session")));
             default: throw new CrossWinException($"Unknown web command '{string.Join(' ', a)}'. Run 'crosswin web help'.");
         }
     }
@@ -105,7 +112,8 @@ public static class WebCommands
                 if (proj.DevServer != null) o["devServerPid"] = proj.DevServer.Id;
             });
             session.Event("info", "app.ready", "browser attached; console, errors and network streaming");
-            Save(env, new WebSession(wsUrl, targetId, bproc.Id, proj.DevServer?.Id ?? 0));
+            // The connection (cdpUrl/targetId/pids) is in this session's own info above, so several web sessions
+            // can run at once and each be reconnected by its session id — no single shared session file.
             Console.WriteLine($"Watching {proj.Url} ({(show ? "visible window" : "headless")}). Ctrl-C stops the browser; run again to reopen.");
             Console.WriteLine("Diagnostics: crosswin events --level warn · crosswin session · crosswin web snap");
         }
@@ -136,16 +144,16 @@ public static class WebCommands
         try { if (!bproc.HasExited) bproc.Kill(true); } catch (Exception) { }
         KillDevServer(proj);
         session.Event("info", "app.exit", browserGone ? "the browser was closed" : "stopped (Ctrl-C)");
-        session.SetInfo(o => { o["state"] = browserGone ? "exited" : "stopped"; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
-        try { File.Delete(SessionPath(env)); } catch (Exception) { }
+        // Clear cdpUrl so this session no longer reads as a live web app once its browser is gone.
+        session.SetInfo(o => { o["state"] = browserGone ? "exited" : "stopped"; o.Remove("cdpUrl"); o["endedAt"] = DateTime.UtcNow.ToString("O"); });
         Console.WriteLine(browserGone ? "Browser closed." : "Stopped (browser and any dev server closed).");
         return 0;
     }
 
-    private static int Ui(HostEnv env, bool all, bool json)
+    private static int Ui(HostEnv env, string dir, bool all, bool json)
     {
-        var ws = Load(env);
-        return WithPage(env, ws, async (cdp, sid) =>
+        var ws = Load(dir);
+        return WithPage(dir, ws, async (cdp, sid) =>
         {
             var sw = Stopwatch.StartNew();
             var nodes = await WebPage.Tree(cdp, sid, all);
@@ -175,10 +183,10 @@ public static class WebCommands
         });
     }
 
-    private static int Input(HostEnv env, List<string> actions)
+    private static int Input(HostEnv env, string dir, List<string> actions)
     {
-        var ws = Load(env);
-        return WithPage(env, ws, async (cdp, sid) =>
+        var ws = Load(dir);
+        return WithPage(dir, ws, async (cdp, sid) =>
         {
             var results = new List<string>();
             bool failed = false;
@@ -190,15 +198,15 @@ public static class WebCommands
             }
             foreach (string r in results) Console.WriteLine(r);
             if (!failed) Console.WriteLine($"-- {actions.Count} action(s) in {sw.ElapsedMilliseconds} ms");
-            WebDiagnostics.Interaction(env, actions, results, failed, sw.ElapsedMilliseconds);
+            WebDiagnostics.Interaction(dir, actions, results, failed, sw.ElapsedMilliseconds);
             return failed ? 1 : 0;
         });
     }
 
-    private static int Snap(HostEnv env, string? outPath)
+    private static int Snap(HostEnv env, string dir, string? outPath)
     {
-        var ws = Load(env);
-        return WithPage(env, ws, async (cdp, sid) =>
+        var ws = Load(dir);
+        return WithPage(dir, ws, async (cdp, sid) =>
         {
             var shot = await cdp.Send("Page.captureScreenshot", new JsonObject { ["format"] = "png", ["captureBeyondViewport"] = true }, sid);
             byte[] png = Convert.FromBase64String(shot["data"]?.ToString() ?? throw new CrossWinException("The browser returned no image."));
@@ -210,21 +218,19 @@ public static class WebCommands
         });
     }
 
-    private static int Stop(HostEnv env)
+    private static int Stop(HostEnv env, string dir)
     {
-        var ws = Load(env);
-        try { WithPage(env, ws, async (cdp, _) => { await cdp.Send("Target.closeTarget", new JsonObject { ["targetId"] = ws.TargetId }); return 0; }); }
+        var ws = Load(dir);
+        try { WithPage(dir, ws, async (cdp, _) => { await cdp.Send("Target.closeTarget", new JsonObject { ["targetId"] = ws.TargetId }); return 0; }); }
         catch (Exception) { /* browser may be gone already */ }
         Kill(ws.BrowserPid);
         if (ws.DevServerPid != 0) Kill(ws.DevServerPid);
-        if (File.Exists(env.SessionFile) && File.ReadAllText(env.SessionFile).Trim() is var dir
-            && SessionLog.ReadInfo(dir)["kind"]?.ToString() == "web")
+        if (SessionLog.ReadInfo(dir)["kind"]?.ToString() == "web")
         {
             var log = new SessionLog(dir);
             log.Event("info", "session.stop", "stopped on request");
-            log.SetInfo(o => { o["state"] = "stopped"; o["endedAt"] = DateTime.UtcNow.ToString("O"); });
+            log.SetInfo(o => { o["state"] = "stopped"; o.Remove("cdpUrl"); o["endedAt"] = DateTime.UtcNow.ToString("O"); });
         }
-        try { File.Delete(SessionPath(env)); } catch (Exception) { }
         Console.WriteLine("Stopped.");
         return 0;
     }
@@ -233,22 +239,34 @@ public static class WebCommands
 
     private sealed record WebSession(string CdpUrl, string TargetId, int BrowserPid, int DevServerPid);
 
-    private static string SessionPath(HostEnv env) => Path.Combine(env.Home, "web", "session.json");
-
-    private static void Save(HostEnv env, WebSession s)
+    /// <summary>The web session to act on: the one named by --session &lt;id&gt; (id or unique prefix), else the
+    /// current pointer. Each web run records its own CDP connection in its session info, so several can run and be
+    /// driven at once (multi-session, #2/#5/#6). Throws if the resolved session isn't a live web run.</summary>
+    private static string WebDir(HostEnv env, string? sel)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(SessionPath(env))!);
-        File.WriteAllText(SessionPath(env), JsonSerializer.Serialize(s));
+        if (sel != null) return Commands.ResolveSession(env, sel);
+        if (!File.Exists(env.SessionFile)) throw new CrossWinException("No web app is running: start one with  crosswin web run <target>.");
+        return File.ReadAllText(env.SessionFile).Trim();
     }
 
-    private static WebSession Load(HostEnv env)
+    /// <summary>Reconstructs the CDP connection from the session's own info (written by `web run`).</summary>
+    private static WebSession Load(string dir)
     {
-        if (!File.Exists(SessionPath(env))) throw new CrossWinException("No web app is running: start one with  crosswin web run <target>.");
-        return JsonSerializer.Deserialize<WebSession>(File.ReadAllText(SessionPath(env)))!;
+        var info = SessionLog.ReadInfo(dir);
+        if (info["kind"]?.ToString() != "web" || info["cdpUrl"] == null)
+            throw new CrossWinException("No web app is running in this session: start one with  crosswin web run <target>.");
+        return new WebSession(info["cdpUrl"]!.ToString(), info["targetId"]?.ToString() ?? "",
+            info["browserPid"]?.GetValue<int>() ?? 0, info["devServerPid"]?.GetValue<int>() ?? 0);
+    }
+
+    private static void MarkClosed(string dir)
+    {
+        try { new SessionLog(dir).SetInfo(o => { if (o["state"]?.ToString() is "running" or "starting") o["state"] = "exited"; o.Remove("cdpUrl"); o["endedAt"] = DateTime.UtcNow.ToString("O"); }); }
+        catch (Exception) { }
     }
 
     /// <summary>Reconnects to the running browser, attaches to the page, runs one operation, then disconnects.</summary>
-    private static int WithPage(HostEnv env, WebSession ws, Func<Cdp, string, Task<int>> op)
+    private static int WithPage(string dir, WebSession ws, Func<Cdp, string, Task<int>> op)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var cdp = new Cdp();
@@ -263,8 +281,8 @@ public static class WebCommands
         catch (Exception ex) when (Unreachable(ex))
         {
             // The browser for this session is gone (e.g. closed, or killed by Ctrl-C on an interactive `web run`).
-            // Drop the stale pointer so the next call reports "no web app running" rather than failing to connect.
-            try { File.Delete(SessionPath(env)); } catch (Exception) { }
+            // Mark this session closed so the next call reports "no web app running" rather than failing to connect.
+            MarkClosed(dir);
             throw new CrossWinException("The browser for this web session has closed. Start a new one with  crosswin web run <target>.");
         }
         finally { cdp.Dispose(); }

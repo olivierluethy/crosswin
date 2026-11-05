@@ -56,12 +56,11 @@ public static class Mcp
         string curDir = File.Exists(env.SessionFile) ? File.ReadAllText(env.SessionFile).Trim() : "";
         string dir = Commands.ResolveSession(env, sel);
         string kind = SessionLog.ReadInfo(dir)["kind"]?.ToString() ?? "desktop";
-        if (kind is "web" or "android" && dir != curDir)
-        {
-            string w = kind == "android" ? "mobile" : "web";
-            throw new CrossWinException($"That {w} session isn't the one attached, and only one {w} session can be driven live at a time. Switch to it first with crosswin_attach session=\"{Path.GetFileName(dir)}\".");
-        }
-        return (kind, kind == "desktop" ? new[] { "--session", sel } : Array.Empty<string>());
+        // Mobile still keeps a single live adb connection, so only the attached one can be driven.
+        if (kind == "android" && dir != curDir)
+            throw new CrossWinException($"That mobile session isn't the one attached, and only one mobile session can be driven live at a time. Switch to it first with crosswin_attach session=\"{Path.GetFileName(dir)}\".");
+        // Desktop (per-session agent) and web (per-session CDP connection) can be driven by id.
+        return (kind, kind is "desktop" or "web" ? new[] { "--session", sel } : Array.Empty<string>());
     }
 
     private static readonly Tool[] Tools =
@@ -147,7 +146,7 @@ public static class Mcp
             {
                 var (kind, sf) = InteractTarget(env, a);
                 var flags = new[] { Flag(a, "all") ? "--all" : "", Flag(a, "json") ? "--json" : "" }.Where(s => s.Length > 0).ToArray();
-                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
+                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "ui" }.Concat(flags).Concat(sf).ToArray()))
                     : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "ui" }.Concat(flags).ToArray()))
                     : Capture(() => Commands.Ui(env, flags.Concat(sf).ToArray()));
             }),
@@ -159,7 +158,7 @@ public static class Mcp
             {
                 var (kind, sf) = InteractTarget(env, a);
                 var actions = a["actions"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
-                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "input" }.Concat(actions).ToArray()))
+                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "input" }.Concat(actions).Concat(sf).ToArray()))
                     : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "input" }.Concat(actions.Select(x => x.StartsWith("expect ") ? "wait-for " + x[7..] : x)).ToArray()))
                     : Capture(() => Commands.Input(env, actions.Concat(sf).ToArray()));
             }),
@@ -169,7 +168,7 @@ public static class Mcp
             (env, repo, a) =>
             {
                 var (kind, sf) = InteractTarget(env, a);
-                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "snap" }))
+                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "snap" }.Concat(sf).ToArray()))
                     : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "snap" }))
                     : Capture(() => Commands.Snap(env, sf));
             }),
@@ -179,7 +178,7 @@ public static class Mcp
             (env, repo, a) =>
             {
                 var (kind, sf) = InteractTarget(env, a);
-                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "stop" }))
+                return kind == "web" ? Capture(() => CrossWin.Web.WebCommands.Dispatch(env, new[] { "stop" }.Concat(sf).ToArray()))
                     : kind == "android" ? Capture(() => Mobile.MobileCommands.Dispatch(env, new[] { "stop" }))
                     : Capture(() => Commands.Stop(env, sf));
             }),

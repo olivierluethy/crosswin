@@ -40,10 +40,8 @@ public sealed partial class WebDiagnostics
     }
 
     /// <summary>Records a batch of web interactions with per-action results (typed text redacted), like the other backends.</summary>
-    public static void Interaction(HostEnv env, IReadOnlyList<string> actions, IReadOnlyList<string> results, bool failed, long ms)
+    public static void Interaction(string dir, IReadOnlyList<string> actions, IReadOnlyList<string> results, bool failed, long ms)
     {
-        if (!File.Exists(env.SessionFile)) return;
-        string dir = File.ReadAllText(env.SessionFile).Trim();
         if (SessionLog.ReadInfo(dir)["kind"]?.ToString() != "web") return;
         new SessionLog(dir).Event(failed ? "warn" : "info", "interaction.batch", $"{actions.Count} action(s){(failed ? ", failed" : "")}", e =>
         {
