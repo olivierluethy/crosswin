@@ -42,6 +42,9 @@ public static class MobileCommands
           crosswin mobile inspect <repo>       Detect the app type and what can run here
           crosswin mobile doctor               Check Flutter, JDK, Android tools and acceleration
 
+        ui / input / snap / stop / device act on the current mobile session; add  --session <id>  (from
+        crosswin sessions ) to target one of several apps running on different devices/emulators at once.
+
         LIST: device ids separated by commas, or ios, android, phones, all.
         """;
 

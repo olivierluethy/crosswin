@@ -28,6 +28,9 @@ public static class WebCommands
           crosswin web stop                  Close the page and the browser (and any dev server crosswin started)
           crosswin web inspect <target>      What crosswin would run and whether a browser / Node are available
 
+        ui / input / snap / stop act on the current web session; add  --session <id>  (from  crosswin sessions )
+        to target one of several web apps running at once — each keeps its own browser connection.
+
         Then use the shared commands:  crosswin events --level warn · crosswin session
         """;
 

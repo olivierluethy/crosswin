@@ -175,8 +175,9 @@ crosswin web run <url | file.html | dir>
                      Runtime.exceptionThrown -> exception.unhandled (source file mapped into the project), Network.
                      loadingFailed/responseReceived(>=400) -> network.failed/error, Log.entryAdded -> browser.*
   Web/WebCommands.cs  attached run (Ctrl-C detaches, browser left up), snap (Page.captureScreenshot), stop (close
-                     target + kill browser/dev server), inspect. Reconnect info (cdpUrl, targetId, pids) in session.json
-                     + ~/.crosswin/web/session.json, so snap/stop re-attach from a separate process.
+                     target + kill browser/dev server), inspect. Reconnect info (cdpUrl, targetId, pids) lives in each
+                     run's own session.json, so snap/ui/stop re-attach from a separate process by session id (no shared
+                     web session file — see "Multi-session targeting").
 ```
   Web/WebPage.cs      interaction: `web ui` is one Runtime.evaluate returning a compact DOM/accessibility tree in the
                      shared node schema; `web input` does real CDP input (Input.dispatchMouseEvent / insertText /
@@ -185,8 +186,30 @@ crosswin web run <url | file.html | dir>
 ```
 No Node or Playwright is needed to *drive* the browser (CDP is spoken directly); a dev server still needs the app's own
 Node toolchain, while a .html file or a static folder runs with no server. MCP exposes `crosswin_web_run`, and
-`crosswin_ui/input/snap/stop` route to desktop, mobile or web by the current session's kind — the same agent loop across
+`crosswin_ui/input/snap/stop` route to desktop, mobile or web by the target session's kind — the same agent loop across
 all three backends. Implemented, not verified yet (compile-only).
+
+## Multi-session targeting (issues #2, #5, #6 — concurrent sessions)
+Every run is one directory under `~/.crosswin/session/<id>/`; `~/.crosswin/session/current` is a pointer holding the
+dir of the "current" session (what commands act on by default). The design rule: **no backend keeps live-connection
+state in a single shared file** — each session's own `session.json` carries everything needed to reconnect to it:
+- desktop: the in-process agent is addressed through the session dir (a request/response file protocol), so two desktop
+  apps are independent;
+- web: `cdpUrl`/`targetId`/`browserPid`/`devServerPid` (reconnect over CDP);
+- mobile: `serial`/`package`/`activity`/`deviceProfile` (reconnect over adb).
+
+On top of that:
+- **Discover:** `crosswin sessions` / MCP `crosswin_sessions` list every recorded run with a liveness-checked state
+  (a desktop/web runner whose pid is gone reads `stopped`; an android `running` that can't be confirmed host-side is
+  flagged `unverified`) and error/warn counts.
+- **Switch:** `crosswin attach <id>` / MCP `crosswin_attach` move the shared pointer (one-at-a-time use, e.g. the GUI).
+- **Target without switching:** every read/inspect/interact command — `session`, `events`, `ui`, `input`, `snap`,
+  `stop` (CLI `--session <id>`, MCP `session=<id>`) — acts on a specific run by id or unique prefix and never moves the
+  pointer, so several agents can read and drive their own sessions concurrently. Ids resolve through
+  `Commands.ResolveSession` (traversal-guarded: the dir must sit under the session root).
+- **Inherent limit:** two sessions on the *same physical device* still contend for that one device (adb is per-device);
+  different emulators/phones/browsers are independent. Concurrent *reads* and the resolution logic are host-verified;
+  two simultaneously *driven* live sessions need live browsers/devices to verify.
 
 ## GUI control surface (issues #4, #5, #6 — for non-developers)
 ```
