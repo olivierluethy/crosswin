@@ -138,6 +138,18 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   dependency it cannot satisfy instead of claiming the app would run. The `run` stage was not attempted (execution; and
   this app's Adobe COM dependency would block it anyway) — a clean COM-free third-party app is still wanted for the
   `run` acceptance.
+- **E18 COM-free third-party WinForms `inspect`** (2026-11-05, macOS arm64, 5x/dotNetApplicationSamples @ shallow HEAD,
+  MIT; cloned into an isolated scratch dir, read-only): the COM-free counterpart to E16. Three *unmodified* external
+  WinForms apps (Application3/4/5 — `WinExe`, legacy non-SDK, .NET Framework v4.0, WinForms, AnyCPU, only BCL
+  references; a repo-wide grep for `COMReference`/`EmbedInteropTypes`/`Interop.` found nothing) each classified
+  correctly with an "Experimental" verdict (netfx → built with the .NET SDK after legacy translation, run on Wine Mono
+  — the path proved runnable in E13) and — the point — **no `risk:` line at all**, unlike E16's `COMReference` blocker.
+  So the same detector that honestly blocks a proprietary-COM app (E16) gives a clean, runnable verdict for a COM-free
+  third-party app, with no unsatisfiable dependency. This is the sample line-10 wanted for the actual third-party `run`
+  acceptance; the `run` itself (launching Wine) is left for the user's interactive acceptance via the verified E13
+  legacy path: `./crosswin run <repo>/Application3`. **Nit noticed (not changed):** the netfx verdict text appends
+  "whose WPF support is incomplete" even for a WinForms app — shared Mono-path wording, harmless but slightly off for
+  WinForms.
 - **E17 multi-session concurrency & isolation** (2026-11-05, macOS arm64, host-side only — no app/Wine/browser/device
   launched): the per-session plumbing (compile-only until now) verified against an isolated `CROSSWIN_HOME` fixture
   holding **three concurrent sessions** — desktop, web and android — each reconstructed from its own `session.json`.
