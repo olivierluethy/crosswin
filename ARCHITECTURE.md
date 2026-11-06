@@ -147,9 +147,11 @@ Windows .NET runtime (from NuGet runtime packs) run unmodified on Wine's Win32 i
   So the same detector that honestly blocks a proprietary-COM app (E16) gives a clean, runnable verdict for a COM-free
   third-party app, with no unsatisfiable dependency. This is the sample line-10 wanted for the actual third-party `run`
   acceptance; the `run` itself (launching Wine) is left for the user's interactive acceptance via the verified E13
-  legacy path: `./crosswin run <repo>/Application3`. **Nit noticed (not changed):** the netfx verdict text appends
-  "whose WPF support is incomplete" even for a WinForms app — shared Mono-path wording, harmless but slightly off for
-  WinForms.
+  legacy path: `./crosswin run <repo>/Application3`. **Nit fixed 2026-11-06:** the netfx verdict text used to append
+  "whose WPF support is incomplete" even for a WinForms app; `Assessment.For` now adds that clause only when the app
+  actually uses WPF (`Ui` is Wpf or Both). Verified host-side: LegacyWinForms (v4.8 WinForms) → no WPF clause; a scratch
+  legacy-WPF csproj (v4.8, PresentationFramework) → clause present; build clean (0 warnings). The GUI's plain-language
+  summary never named WPF here, so it was unaffected.
 - **E17 multi-session concurrency & isolation** (2026-11-05, macOS arm64, host-side only — no app/Wine/browser/device
   launched): the per-session plumbing (compile-only until now) verified against an isolated `CROSSWIN_HOME` fixture
   holding **three concurrent sessions** — desktop, web and android — each reconstructed from its own `session.json`.

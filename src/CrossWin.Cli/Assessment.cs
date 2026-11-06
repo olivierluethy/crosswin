@@ -13,9 +13,16 @@ public sealed record Assessment(SupportLevel Level, string Summary)
         if (!p.IsApp || p.Ui == UiFramework.None)
             return new(SupportLevel.Unsupported, "not a WinForms/WPF application project (library or non-UI).");
         if (p.IsNetFramework || !p.SdkStyle)
+        {
+            // Wine Mono runs WinForms well (E13); its WPF support is incomplete. Only mention WPF when the app uses it,
+            // so a plain WinForms app isn't told about a limitation that doesn't apply to it.
+            string monoCaveat = p.Ui is UiFramework.Wpf or UiFramework.Both
+                ? "an open-source .NET Framework reimplementation whose WPF support is incomplete"
+                : "an open-source .NET Framework reimplementation";
             return new(SupportLevel.Experimental,
                 ".NET Framework app: built with the .NET SDK (legacy project translated in the work copy) and run on Wine Mono, " +
-                "an open-source .NET Framework reimplementation whose WPF support is incomplete. snap/input are not available.");
+                $"{monoCaveat}. snap/input are not available.");
+        }
         int version = p.ChosenTfm is { } t ? ProjectInspector.ModernVersion(t) ?? 0 : 0;
         if (version < 6)
             return new(SupportLevel.Experimental, $"{p.ChosenTfm} is out of support; build may work, the CrossWin agent (snap/input) is disabled.");
